@@ -86,7 +86,7 @@ HTTP API + embedded UI
 | Function | Responsibility | 职责 |
 |---|---|---|
 | `safe_workspace_file` | allow only normal files under `WORKSPACE_ROOT`; reject internal tool files | 限定源文件只能来自工作区，拒绝工具内部文件 |
-| `preflight_check` | validate file, goal, type hints, and preview before creating a job | 创建任务前做文件、目标、预览检查 |
+| `preflight_check` | validate file, goal, type hints, and preview before creating a job | 创建任务前做文件、目标、类型、预览检查 |
 | `create_job` | snapshot original, create worktree, write `TASK.md` and `STATUS.json` | 创建快照、worktree 和任务状态 |
 | `build_builder_prompt` | create current-round Builder prompt | 生成 Builder prompt |
 | `run_builder_cli` | spawn local Claude CLI with API-key env stripped | 调用 Claude CLI，并移除 API-key 环境变量 |
