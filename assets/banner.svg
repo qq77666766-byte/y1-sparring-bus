@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="title desc">
+  <title id="title">Y1 Sparring Bus</title>
+  <desc id="desc">A local AI sparring workflow where Claude builds, Codex reviews, rules decide, and a human merges.</desc>
+  <rect width="1280" height="520" fill="#f7f5f0"/>
+  <path d="M0 432h1280v88H0z" fill="#e9e3d6"/>
+  <g fill="none" stroke="#23211d" stroke-width="2">
+    <rect x="78" y="78" width="1124" height="364"/>
+    <line x1="78" y1="164" x2="1202" y2="164"/>
+    <line x1="456" y1="164" x2="456" y2="442"/>
+    <line x1="824" y1="164" x2="824" y2="442"/>
+  </g>
+  <text x="104" y="126" fill="#23211d" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="44" font-weight="700">Y1 Sparring Bus</text>
+  <text x="104" y="146" fill="#6b665d" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">local AI collaboration pipeline</text>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="104" y="214" fill="#23211d" font-size="22" font-weight="700">Builder</text>
+    <text x="104" y="250" fill="#6b665d" font-size="18">Claude edits the isolated worktree copy.</text>
+    <rect x="104" y="286" width="276" height="86" fill="#ffffff" stroke="#d3cbbd"/>
+    <text x="126" y="320" fill="#23211d" font-size="16">worktree/proposal.md</text>
+    <text x="126" y="350" fill="#6b665d" font-size="14">source remains untouched</text>
+    <text x="486" y="214" fill="#23211d" font-size="22" font-weight="700">Reviewer</text>
+    <text x="486" y="250" fill="#6b665d" font-size="18">Codex critiques the diff and returns JSON.</text>
+    <rect x="486" y="286" width="276" height="86" fill="#ffffff" stroke="#d3cbbd"/>
+    <text x="508" y="320" fill="#23211d" font-size="16">P0 / P1 / score</text>
+    <text x="508" y="350" fill="#6b665d" font-size="14">read-only review</text>
+    <text x="854" y="214" fill="#23211d" font-size="22" font-weight="700">Human Merge</text>
+    <text x="854" y="250" fill="#6b665d" font-size="18">Rules stop the loop. You decide the merge.</text>
+    <rect x="854" y="286" width="276" height="86" fill="#ffffff" stroke="#d3cbbd"/>
+    <text x="876" y="320" fill="#23211d" font-size="16">FINAL_REVIEW.md</text>
+    <text x="876" y="350" fill="#6b665d" font-size="14">merge or abandon</text>
+  </g>
+  <g fill="none" stroke="#9d3f32" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M386 329h70"/>
+    <path d="M444 317l12 12-12 12"/>
+    <path d="M768 329h56"/>
+    <path d="M812 317l12 12-12 12"/>
+  </g>
+  <text x="104" y="480" fill="#6b665d" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="15">Claude builds -> Codex reviews -> deterministic judge -> human merge</text>
+</svg>
