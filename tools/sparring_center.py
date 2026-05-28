@@ -204,7 +204,7 @@ def cli_health() -> dict[str, Any]:
         "app_root": str(REVIEW_ROOT),
         "review_root": str(REVIEW_ROOT),
         "jobs_root": str(JOBS_ROOT),
-        "sample_path": str(REVIEW_ROOT / "examples" / "sample_proposal.md"),
+        "sample_path": str(REVIEW_ROOT / "examples" / "demo_proposal_zh.md"),
         "claude_cli": claude,
         "codex_cli": codex,
         "cli_detected": bool(claude and codex),
@@ -1903,7 +1903,7 @@ function applyTpl(name){
 }
 
 function fillSample(){
-  source.value=(healthData && healthData.sample_path) || 'examples/sample_proposal.md';
+  source.value=(healthData && healthData.sample_path) || 'examples/demo_proposal_zh.md';
   goal.value='改得更适合给省厅领导汇报，结论前置，删除防御性表达，保留核心业务模块';
 }
 
