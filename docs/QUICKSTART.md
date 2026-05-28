@@ -7,7 +7,8 @@ Y1 Sparring Bus 是一个本机 AI 左右互搏控制台。你给它一个文件
 ## 1. Check The Local Environment / 检查本机环境
 
 ```bash
-./scripts/doctor.sh
+bash scripts/install.sh
+bash scripts/doctor.sh
 ```
 
 Required / 需要：
@@ -18,10 +19,22 @@ Required / 需要：
 - Codex CLI available as `codex` or `/Applications/Codex.app/Contents/Resources/codex` / Codex CLI 可用
 - Local login already completed for both tools / 两个工具都已完成本机登录
 
+For full automatic sparring, run:
+
+如果要确认完整自动互搏可用，运行：
+
+```bash
+bash scripts/doctor.sh --strict
+```
+
+If strict mode fails, the local UI can still run, but the automatic Claude/Codex loop will not be available yet.
+
+如果 strict 模式失败，本机页面仍可启动，但自动 Claude/Codex 循环暂时不可用。
+
 ## 2. Start The Server / 启动服务
 
 ```bash
-./scripts/start.sh
+bash scripts/start.sh
 ```
 
 Open / 打开：
@@ -33,7 +46,13 @@ http://127.0.0.1:8765/sparring
 Limit the file browser to a workspace / 限定文件浏览根目录：
 
 ```bash
-./scripts/start.sh 8765 ~/Documents
+bash scripts/start.sh 8765 ~/Documents
+```
+
+Smoke test the local backend / 烟测本机后端：
+
+```bash
+bash scripts/smoke-test.sh
 ```
 
 ## 3. Run A Demo / 先跑一个演示
@@ -120,7 +139,14 @@ Then decide / 然后选择：
 ## 7. Stop The Server / 停止服务
 
 ```bash
-./scripts/stop.sh
+bash scripts/stop.sh
+```
+
+Optional login-time background service / 可选开机后台服务：
+
+```bash
+bash scripts/install-service.sh 8765 ~/Documents
+bash scripts/uninstall-service.sh
 ```
 
 ## Safety Rules / 安全规则

@@ -9,7 +9,7 @@ This page gives you ready-to-run demo cases for Y1 Sparring Bus. Each case inclu
 1. Start the server. / 启动服务。
 
 ```bash
-./scripts/start.sh
+bash scripts/start.sh
 ```
 
 2. Open `http://127.0.0.1:8765/sparring`. / 打开页面。

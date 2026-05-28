@@ -37,12 +37,20 @@ y1-sparring-bus/
   tools/
     sparring_center.py
   scripts/
+    install.sh
     doctor.sh
     start.sh
     stop.sh
+    status.sh
+    smoke-test.sh
+    install-service.sh
+    uninstall-service.sh
   docs/
     QUICKSTART.md
+    RUN_MODES.md
     DEMO_CASES.md
+    BACKGROUND_SERVICE.md
+    RELEASE_CHECKLIST.md
     MANUAL.md
     ARCHITECTURE.md
   examples/

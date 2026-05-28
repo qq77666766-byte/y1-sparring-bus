@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  local-checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python syntax
+        run: python3 -m py_compile tools/sparring_center.py examples/demo_python_script.py
+
+      - name: Shell syntax
+        run: bash -n scripts/*.sh
+
+      - name: Backend smoke test
+        run: bash scripts/smoke-test.sh 8876

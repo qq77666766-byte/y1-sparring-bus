@@ -22,9 +22,10 @@ It is a writing and review pipeline, not an autonomous deployment system. The go
 ## Start And Stop / 启动与停止
 
 ```bash
-./scripts/start.sh
-./scripts/start.sh 8765 ~/Documents
-./scripts/stop.sh
+bash scripts/start.sh
+bash scripts/start.sh 8765 ~/Documents
+bash scripts/status.sh
+bash scripts/stop.sh
 ```
 
 Manual equivalent / 手动启动等价命令：
@@ -34,6 +35,10 @@ python3 tools/sparring_center.py --host 127.0.0.1 --port 8765 --workspace-root ~
 ```
 
 Open / 打开 `http://127.0.0.1:8765/sparring`。
+
+Use [BACKGROUND_SERVICE.md](BACKGROUND_SERVICE.md) if you want the local backend to start after macOS login.
+
+如果希望 macOS 登录后自动启动本机后端，见 [BACKGROUND_SERVICE.md](BACKGROUND_SERVICE.md)。
 
 ## Job States / 任务状态
 
