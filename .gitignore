@@ -1,0 +1,13 @@
+# 运行时产物
+sparring-center.log
+sparring-center.pid
+
+# Job 留痕（私人数据，不该跟代码一起发）
+jobs/
+
+# macOS 系统垃圾
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
