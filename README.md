@@ -1,39 +1,71 @@
 # Y1 Sparring Bus
 
-> Local AI sparring for writing, proposals, specs, and skills: **Claude builds, Codex reviews, deterministic rules decide whether another round is needed, and a human decides whether to merge.**
+> **Claude writes. Codex reviews. The rules decide when it is good enough. You decide whether to merge.**
+
+Y1 Sparring Bus is a local AI sparring console for people who write proposals, reports, specs, prompts, and agent skills. It turns the messy back-and-forth of "rewrite this" and "review this again" into a visible, repeatable, human-controlled pipeline.
 
 ![banner](assets/banner.svg)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![macOS](https://img.shields.io/badge/macOS-local%20only-black)](#requirements)
+[![Version](https://img.shields.io/badge/version-v1.0-black)](#v10)
+[![macOS](https://img.shields.io/badge/macOS-local%20first-black)](#requirements)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](#quickstart)
-[![No API Key](https://img.shields.io/badge/API%20keys-not%20used-green)](#why-local)
+[![No API Key](https://img.shields.io/badge/API%20keys-not%20used-green)](#why-it-matters)
 
-Y1 Sparring Bus turns the manual "ask one AI to rewrite, ask another AI to critique" loop into an auditable local workflow.
+## What It Does
 
-You select one UTF-8 text file, write a one-line goal, and start a job. The tool creates an isolated worktree copy, calls local Claude CLI as Builder, calls local Codex CLI as Reviewer, runs deterministic checks, and stops only when the score and issue gates pass or the round limit is reached.
+Most AI editing workflows fail in the same way: one model rewrites, sounds confident, and leaves you guessing whether the result is actually better.
 
-The original file is not changed until you explicitly click merge.
+Y1 Sparring Bus adds a second mind and a stop rule:
 
-## Why Local
+```text
+your file + one clear goal
+  -> Claude Builder rewrites an isolated copy
+  -> local Runner checks obvious risks
+  -> Codex Reviewer scores and flags P0/P1/P2 issues
+  -> deterministic Judge decides continue / stop / escalate
+  -> you inspect FINAL_REVIEW + diff, then merge or abandon
+```
 
-- Uses your local Claude Code CLI and Codex app login state.
-- Strips `ANTHROPIC_*` environment variables before spawning Claude.
-- Stores jobs as plain files under `jobs/`.
-- Uses only the Python standard library.
-- Does not run a cloud server, daemon, queue, database, or API-key service.
+The result is not just a better draft. It is a full audit trail of how the draft improved, what risks remain, and why the loop stopped.
 
-## Requirements
+## Built For
 
-| Item | Requirement |
+| Use case | What improves |
 |---|---|
-| OS | macOS |
-| Python | 3.9+ |
-| Builder | Claude Code CLI, logged in locally |
-| Reviewer | Codex app CLI, logged in locally |
-| Input | One UTF-8 text file (`.md`, `.txt`, `.py`, `.js`, etc.) |
+| Leadership reports | sharper conclusions, less defensive language, clearer evidence |
+| Business proposals | stronger structure, cleaner value logic, less filler |
+| Strategy notes | explicit assumptions, visible risks, action-oriented wording |
+| Agent skills / prompts | clearer trigger boundaries, fewer vague instructions |
+| Code or scripts | read-only review loop before human-controlled merge |
 
-Word, PDF, Excel, and binary files should be converted to text first.
+## Why It Matters
+
+Y1 Sparring Bus is designed around one principle: **AI may iterate, but humans keep the final decision.**
+
+- Original files are never edited directly.
+- Every job creates a frozen snapshot and an isolated worktree.
+- Every Builder prompt, patch, Runner log, Reviewer JSON, and Judge result is saved.
+- Merge always requires explicit human confirmation.
+- Claude child processes strip `ANTHROPIC_*` environment variables.
+- Jobs are plain local files; there is no database, daemon, or cloud service.
+
+## What You Get After A Run
+
+```text
+jobs/<job_id>/
+  TASK.md                 # frozen goal and acceptance gates
+  STATUS.json             # current state, round, score trend
+  ledger.jsonl            # append-only event log
+  INPUT_SNAPSHOT/<file>   # original frozen copy
+  worktree/<file>         # AI-edited copy
+  rounds/                 # prompts, patches, reviews, judge records
+  FINAL.md                # final candidate
+  FINAL.diff              # original vs final
+  FINAL_REVIEW.md         # human decision brief
+```
+
+The most useful file is `FINAL_REVIEW.md`: it tells you what changed, what score it reached, what issues remain, and whether the system recommends merge, another round, or escalation.
 
 ## Quickstart
 
@@ -48,7 +80,7 @@ Open:
 http://127.0.0.1:8765/sparring
 ```
 
-Optional: limit selectable files to a specific workspace:
+Choose a workspace root:
 
 ```bash
 ./scripts/start.sh 8765 ~/Documents
@@ -62,48 +94,30 @@ Stop:
 ./scripts/stop.sh
 ```
 
-## What It Produces
+## Requirements
 
-Each job is a self-contained audit folder:
-
-```text
-jobs/<job_id>/
-  TASK.md
-  STATUS.json
-  ledger.jsonl
-  INPUT_SNAPSHOT/<file>
-  worktree/<file>
-  rounds/
-    r001.builder.prompt.md
-    r001.builder.patch
-    r001.runner.log
-    r001.reviewer.prompt.md
-    r001.reviewer.json
-    r001.judge.json
-  FINAL.md
-  FINAL.diff
-  FINAL_REVIEW.md
-```
-
-## Design Rules
-
-1. Builder edits only the isolated worktree copy.
-2. Reviewer is read-only.
-3. Judge is deterministic: score, P0/P1 issues, runner failures, and max rounds.
-4. Merge is always human-confirmed.
-5. Logs are append-only.
-6. No Anthropic API key is used or forwarded.
-7. The tool stays local-first and dependency-light.
-
-## Not Goals
-
-| Not planned for v1 | Reason |
+| Item | Requirement |
 |---|---|
-| Cloud deployment | Local OAuth credentials do not belong on a server |
-| Multi-user collaboration | v1 is a single-machine tool |
-| Whole-directory rewrites | Single-file scope keeps attribution clear |
-| AI Judge | Deterministic stop rules are cheaper and easier to audit |
-| Direct Word/PDF/Excel handling | Convert to text first |
+| OS | macOS |
+| Python | 3.9+ |
+| Builder | Claude Code CLI, logged in locally |
+| Reviewer | Codex app CLI, logged in locally |
+| Input | one UTF-8 text file |
+
+Word, PDF, Excel, and binary files should be converted to `.md` or `.txt` first.
+
+## v1.0
+
+This first public version is intentionally narrow:
+
+- single-file sparring
+- local web console
+- Claude Builder + Codex Reviewer
+- deterministic Judge
+- manual merge gate
+- zero Python package dependencies
+
+It does not try to be a cloud platform, multi-user collaboration tool, or autonomous deployment agent.
 
 ## Documentation
 
@@ -115,11 +129,11 @@ jobs/<job_id>/
 | Install notes | [INSTALL.md](INSTALL.md) |
 | Agent skill entry | [SKILL.md](SKILL.md) |
 
-## Design References
+## Design Reference
 
-This project borrows the same high-level product discipline seen in open agent-skill projects such as [alchaincyf/darwin-skill](https://github.com/alchaincyf/darwin-skill): clear install path, visible rubric, human checkpoints, failure blacklists, and a ratchet-like preference for keeping only improvements.
+This project was inspired by the discipline of open agent-skill projects such as [alchaincyf/darwin-skill](https://github.com/alchaincyf/darwin-skill): visible loops, explicit rubrics, failure handling, and keep-or-revert checkpoints.
 
-Y1 Sparring Bus applies that thinking to **document/code collaboration**, not skill optimization.
+Y1 Sparring Bus applies that pattern to practical document and code collaboration.
 
 ## License
 
