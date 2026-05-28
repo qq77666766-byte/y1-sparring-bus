@@ -15,6 +15,22 @@ Y1 Sparring Bus 是一个本机 AI 左右互搏控制台，适合改方案、汇
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](#quickstart--快速开始)
 [![No API Key](https://img.shields.io/badge/API%20keys-not%20used-green)](#why-it-matters--为什么重要)
 
+## Can I Use It Right After Download? / 下载后能直接用吗
+
+Yes for the local UI, examples, docs, and backend smoke test. Full automatic sparring needs your Mac to already have Claude Code CLI and Codex CLI installed and logged in.
+
+本机页面、演示案例、文档和后端烟测可以直接跑。完整自动互搏需要你的 Mac 已经安装并登录 Claude Code CLI 和 Codex CLI。
+
+```bash
+bash scripts/install.sh
+bash scripts/smoke-test.sh
+bash scripts/doctor.sh --strict
+```
+
+Read [docs/RUN_MODES.md](docs/RUN_MODES.md) for the exact capability levels.
+
+准确能力档位见：[docs/RUN_MODES.md](docs/RUN_MODES.md)。
+
 ## What It Does / 它做什么
 
 Most AI editing workflows have one weak point: a single model rewrites confidently, but you still have to guess whether the result is truly better.
@@ -106,8 +122,8 @@ The most useful file is `FINAL_REVIEW.md`: it tells you what changed, what score
 ## Quickstart / 快速开始
 
 ```bash
-./scripts/doctor.sh
-./scripts/start.sh
+bash scripts/install.sh
+bash scripts/start.sh
 ```
 
 Open / 打开：
@@ -119,15 +135,21 @@ http://127.0.0.1:8765/sparring
 Choose a workspace root / 指定文件浏览根目录：
 
 ```bash
-./scripts/start.sh 8765 ~/Documents
+bash scripts/start.sh 8765 ~/Documents
 # or / 或
-SPARRING_WORKSPACE_ROOT=~/Documents ./scripts/start.sh
+SPARRING_WORKSPACE_ROOT=~/Documents bash scripts/start.sh
+```
+
+Check full automatic mode / 检查完整自动模式：
+
+```bash
+bash scripts/doctor.sh --strict
 ```
 
 Stop / 停止：
 
 ```bash
-./scripts/stop.sh
+bash scripts/stop.sh
 ```
 
 ## Requirements / 系统要求
@@ -143,6 +165,29 @@ Stop / 停止：
 Word, PDF, Excel, and binary files should be converted to `.md` or `.txt` first.
 
 Word、PDF、Excel 和二进制文件请先转成 `.md` 或 `.txt`。
+
+## Local Backend / 本机后台
+
+The backend is a local Python server bound to `127.0.0.1`. It is not a cloud backend and it does not expose files to the public internet.
+
+后台是绑定到 `127.0.0.1` 的本机 Python 服务。它不是云端后台，也不会把文件暴露到公网。
+
+Normal temporary background process / 普通临时后台进程：
+
+```bash
+bash scripts/start.sh
+bash scripts/status.sh
+bash scripts/stop.sh
+```
+
+Optional login-time background service / 可选开机登录后自动启动：
+
+```bash
+bash scripts/install-service.sh 8765 ~/Documents
+bash scripts/uninstall-service.sh
+```
+
+Details / 详情：[docs/BACKGROUND_SERVICE.md](docs/BACKGROUND_SERVICE.md)
 
 ## v1.0 / v1.0
 
@@ -166,8 +211,11 @@ It does not try to be a cloud platform, multi-user collaboration tool, or autono
 | Need | File | 需求 | 文件 |
 |---|---|---|---|
 | First run | [docs/QUICKSTART.md](docs/QUICKSTART.md) | 第一次跑通 | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
+| Run modes | [docs/RUN_MODES.md](docs/RUN_MODES.md) | 可用档位 | [docs/RUN_MODES.md](docs/RUN_MODES.md) |
 | Demo cases | [docs/DEMO_CASES.md](docs/DEMO_CASES.md) | 演示案例 | [docs/DEMO_CASES.md](docs/DEMO_CASES.md) |
 | Full manual | [docs/MANUAL.md](docs/MANUAL.md) | 完整手册 | [docs/MANUAL.md](docs/MANUAL.md) |
+| Background service | [docs/BACKGROUND_SERVICE.md](docs/BACKGROUND_SERVICE.md) | 本机后台 | [docs/BACKGROUND_SERVICE.md](docs/BACKGROUND_SERVICE.md) |
+| Release checklist | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | 发布检查 | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) |
 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构说明 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Install notes | [INSTALL.md](INSTALL.md) | 安装说明 | [INSTALL.md](INSTALL.md) |
 | Agent skill entry | [SKILL.md](SKILL.md) | Skill 入口 | [SKILL.md](SKILL.md) |

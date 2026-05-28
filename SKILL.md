@@ -44,15 +44,16 @@ Do not use this skill to:
 From the repository root / 在仓库根目录：
 
 ```bash
-./scripts/doctor.sh
-./scripts/start.sh
-./scripts/stop.sh
+bash scripts/install.sh
+bash scripts/doctor.sh --strict
+bash scripts/start.sh
+bash scripts/stop.sh
 ```
 
 Use a specific workspace root / 指定工作区根目录：
 
 ```bash
-./scripts/start.sh 8765 ~/Documents
+bash scripts/start.sh 8765 ~/Documents
 ```
 
 Open / 打开：
@@ -75,6 +76,10 @@ Suggested demo files:
 Read `docs/DEMO_CASES.md` for goals and expected effects.
 
 查看 `docs/DEMO_CASES.md` 获取目标填写方式和预期效果。
+
+Read `docs/RUN_MODES.md` to explain what works immediately after download and what requires Claude/Codex login.
+
+查看 `docs/RUN_MODES.md`，用于解释下载后哪些能力可直接使用，哪些需要 Claude/Codex 登录。
 
 ## Workflow / 工作流
 
