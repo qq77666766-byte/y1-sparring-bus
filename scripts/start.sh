@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Y1 Sparring Bus · 一键启动 server
-# 用法：./scripts/start.sh [port] [workspace-root]
+# Y1 Sparring Bus · start local backend
+# Usage: bash scripts/start.sh [port] [workspace-root]
 set -e
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,11 +16,22 @@ if [ -n "$WORKSPACE_ARG" ]; then
     ARGS+=(--workspace-root "$WORKSPACE_ARG")
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "找不到 python3 / python3 not found"
+    exit 1
+fi
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)'; then
+    echo "Python 3.9+ required"
+    exit 1
+fi
+
+mkdir -p "$HERE/jobs"
+
 # 检查端口
 if lsof -iTCP:$PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
     EXIST=$(lsof -iTCP:$PORT -sTCP:LISTEN -t 2>/dev/null)
     echo "端口 $PORT 已被进程 $EXIST 占用"
-    echo "如果想停掉再起：./scripts/stop.sh && ./scripts/start.sh"
+    echo "如果想停掉再起：bash scripts/stop.sh && bash scripts/start.sh"
     exit 1
 fi
 
@@ -33,7 +44,7 @@ echo $PID > "$PIDFILE"
 
 sleep 1.5
 if kill -0 $PID 2>/dev/null; then
-    echo "✓ Y1 Sparring Bus 已启动"
+    echo "✓ Y1 Sparring Bus local backend started"
     echo "  PID:  $PID"
     echo "  URL:  http://$HOST:$PORT/sparring"
     echo "  LOG:  $LOG"
@@ -41,7 +52,7 @@ if kill -0 $PID 2>/dev/null; then
         echo "  WORKSPACE: $WORKSPACE_ARG"
     fi
     echo ""
-    echo "  停止: ./scripts/stop.sh"
+    echo "  Stop: bash scripts/stop.sh"
 
     # 尝试用浏览器自动打开
     if command -v open >/dev/null 2>&1; then

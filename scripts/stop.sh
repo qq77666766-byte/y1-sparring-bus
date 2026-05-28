@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Y1 Sparring Bus · 停止 server
+# Y1 Sparring Bus · stop local backend started by scripts/start.sh
 set -e
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,3 +24,5 @@ else
         echo "未发现运行中的 server"
     fi
 fi
+
+echo "如果安装了开机后台服务，请用：bash scripts/uninstall-service.sh"
