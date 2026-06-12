@@ -58,8 +58,22 @@ y1-sparring-bus/
     demo_leadership_memo_en.md
     demo_agent_skill.md
     demo_python_script.py
+  tests/
+    _helpers.py
+    test_judge.py
+    test_guards.py
+    test_checks.py
+    test_config.py
+    test_engines.py
+  config.example.json
   jobs/
     <created at runtime>
+```
+
+Run the test suite with / 运行测试：
+
+```bash
+python3 -m unittest discover -s tests
 ```
 
 ## Runtime Roots / 运行时根目录
@@ -83,11 +97,25 @@ python3 tools/sparring_center.py --workspace-root ~/Documents
 ```text
 HTTP API + embedded UI
   -> job state functions
-  -> Builder / Reviewer subprocess bridge
+  -> engine adapters (Claude / Codex behind one interface)
   -> deterministic Runner and Judge
   -> path, source, and merge guards
   -> JSON/file helpers
 ```
+
+## Engine Adapters / 引擎适配器
+
+Since v2 groundwork, each AI engine sits behind one `EngineAdapter` interface: `detect`, `version`, `login_state`, `build`, `review`. The orchestration layer (`run_builder_cli` / `run_reviewer_cli`) resolves engines from job status plus `config.json`, so adding an engine means writing one adapter subclass and registering it in `ENGINE_CLASSES` — the state machine does not change.
+
+从 v2 地基开始，每个 AI 引擎都实现统一的 `EngineAdapter` 接口：`detect` / `version` / `login_state` / `build` / `review`。编排层（`run_builder_cli` / `run_reviewer_cli`）根据 job 状态和 `config.json` 解析引擎，新增引擎只需写一个适配器子类并注册进 `ENGINE_CLASSES`，状态机不用动。
+
+Defaults preserve v1 behavior exactly: Claude builds, Codex reviews, and a Claude auth failure falls back to the Codex builder.
+
+默认行为与 v1 完全一致：Claude 改稿、Codex 审稿，Claude 鉴权失败时回退 Codex Builder。
+
+Configuration lives in `config.json` (template: `config.example.json`); missing keys fall back to built-in defaults. Job state files carry `schema_version`, and `migrate_jobs()` upgrades old v1 jobs at server start.
+
+配置在 `config.json`（模板见 `config.example.json`），缺省键回落内置默认值。job 的状态文件带 `schema_version`，服务启动时 `migrate_jobs()` 自动升级 v1 老任务。
 
 ## Important Functions / 关键函数
 
@@ -97,9 +125,12 @@ HTTP API + embedded UI
 | `preflight_check` | validate file, goal, type hints, and preview before creating a job | 创建任务前做文件、目标、类型、预览检查 |
 | `create_job` | snapshot original, create worktree, write `TASK.md` and `STATUS.json` | 创建快照、worktree 和任务状态 |
 | `build_builder_prompt` | create current-round Builder prompt | 生成 Builder prompt |
-| `run_builder_cli` | spawn local Claude CLI with API-key env stripped | 调用 Claude CLI，并移除 API-key 环境变量 |
+| `run_builder_cli` | resolve Builder engine and run it; Claude auth failure falls back to Codex | 解析并运行 Builder 引擎；Claude 鉴权失败回退 Codex |
 | `prepare_reviewer` | generate diff, run checks, create Reviewer prompt | 生成 diff、运行检查、生成 Reviewer prompt |
-| `run_reviewer_cli` | spawn local Codex CLI with structured output | 调用 Codex CLI 生成结构化审查 |
+| `run_reviewer_cli` | resolve Reviewer engine and collect structured review JSON | 解析并运行 Reviewer 引擎，收集结构化审查 JSON |
+| `EngineAdapter` and subclasses | one interface per engine: detect, login, build, review; Claude builds strip API-key env | 每个引擎一个适配器：检测、登录、改稿、审稿；Claude 改稿时移除 API-key 环境变量 |
+| `init_engines` / `load_config` | build the engine registry from `config.json` defaults | 按 `config.json` 初始化引擎注册表 |
+| `migrate_jobs` | upgrade v1 job STATUS files to the current schema at startup | 启动时把 v1 job 状态升级到当前 schema |
 | `save_review_and_judge` | save review JSON and decide next state | 保存审查结果并判定下一状态 |
 | `finalize` | create `FINAL.md`, `FINAL.diff`, and `FINAL_REVIEW.md` | 生成最终候选稿、diff 和决策简报 |
 | `merge_job` | human-triggered merge with backup and conflict guard | 人工触发合并，带备份和冲突保护 |

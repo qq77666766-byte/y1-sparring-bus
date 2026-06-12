@@ -3,6 +3,9 @@ sparring-center.log
 sparring-center.pid
 smoke-test.log
 
+# 本机配置（模板见 config.example.json）
+config.json
+
 # Job 留痕（私人数据，不该跟代码一起发）
 jobs/
 
