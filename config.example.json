@@ -1,0 +1,19 @@
+{
+  "_comment": "复制为 config.json 使用；缺省字段自动取内置默认值 / Copy to config.json; missing keys fall back to built-in defaults.",
+  "schema_version": 2,
+  "default_builder": "claude",
+  "default_reviewer": "codex",
+  "engines": {
+    "claude": {
+      "enabled": true,
+      "path": null,
+      "default_model": "sonnet",
+      "timeout_sec": 900
+    },
+    "codex": {
+      "enabled": true,
+      "path": null,
+      "timeout_sec": 900
+    }
+  }
+}

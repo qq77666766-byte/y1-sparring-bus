@@ -91,6 +91,45 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# —— 配置：内置默认值，APP_ROOT/config.json 可覆盖（深合并）。 ——
+CONFIG_PATH = APP_ROOT / "config.json"
+STATUS_SCHEMA_VERSION = 2
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "schema_version": 2,
+    "default_builder": "claude",
+    "default_reviewer": "codex",
+    "engines": {
+        "claude": {"enabled": True, "path": None, "default_model": "sonnet", "timeout_sec": 900},
+        "codex": {"enabled": True, "path": None, "timeout_sec": 900},
+    },
+}
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def load_config(path: Path | None = None) -> dict[str, Any]:
+    user = read_json(path or CONFIG_PATH, None)
+    defaults = json.loads(json.dumps(DEFAULT_CONFIG))
+    if not isinstance(user, dict):
+        return defaults
+    return _deep_merge(defaults, user)
+
+
+CONFIG = load_config()
+DEFAULT_BUILDER_MODEL = (
+    (CONFIG.get("engines", {}).get("claude") or {}).get("default_model") or DEFAULT_BUILDER_MODEL
+)
+
+
 def append_ledger(job_dir: Path, event: str, **fields: Any) -> None:
     row = {"ts": now(), "event": event, **fields}
     with (job_dir / "ledger.jsonl").open("a", encoding="utf-8") as fh:
@@ -194,11 +233,23 @@ def safe_workspace_file(raw_path: str) -> Path:
 
 
 def cli_health() -> dict[str, Any]:
-    claude = shutil.which("claude")
-    codex = shutil.which("codex")
-    app_codex = Path("/Applications/Codex.app/Contents/Resources/codex")
-    if not codex and app_codex.exists():
-        codex = str(app_codex)
+    detected = {eid: engine.detect() for eid, engine in ENGINES.items()}
+    claude = detected.get("claude")
+    codex = detected.get("codex")
+    default_builder = CONFIG.get("default_builder", "claude")
+    default_reviewer = CONFIG.get("default_reviewer", "codex")
+    engines = [
+        {
+            "id": engine.id,
+            "display_name": engine.display_name,
+            "can_build": engine.can_build,
+            "can_review": engine.can_review,
+            "path": detected.get(eid),
+            "login": engine.login_state(),
+            "install_hint": engine.install_hint,
+        }
+        for eid, engine in ENGINES.items()
+    ]
     return {
         "workspace": str(WORKSPACE_ROOT),
         "app_root": str(REVIEW_ROOT),
@@ -208,8 +259,12 @@ def cli_health() -> dict[str, Any]:
         "claude_cli": claude,
         "codex_cli": codex,
         "cli_detected": bool(claude and codex),
-        "auto_mode_available": bool(claude and codex),
+        "auto_mode_available": bool(detected.get(default_builder) and detected.get(default_reviewer)),
         "auto_mode_note": "检测到 Claude/Codex CLI 时可自动运行；失败时仍可回到手动接力。",
+        "engines": engines,
+        "default_builder": default_builder,
+        "default_reviewer": default_reviewer,
+        "config_path": str(CONFIG_PATH),
     }
 
 
@@ -450,6 +505,9 @@ mode: sparring
     status = {
         "job_id": job_id,
         "mode": "sparring",
+        "schema_version": STATUS_SCHEMA_VERSION,
+        "builder_engine": CONFIG.get("default_builder", "claude"),
+        "reviewer_engine": CONFIG.get("default_reviewer", "codex"),
         "state": "WAIT_BUILDER",
         "round": 1,
         "max_rounds": max_rounds,
@@ -1051,15 +1109,6 @@ def extract_json_object(text: str) -> dict[str, Any]:
     raise ValueError("无法从模型输出中解析 JSON object")
 
 
-def command_path(name: str, fallback: str | None = None) -> str:
-    found = shutil.which(name)
-    if found:
-        return found
-    if fallback and Path(fallback).exists():
-        return fallback
-    raise ValueError(f"未检测到 {name} CLI")
-
-
 def finish_builder_round(
     job_dir: Path,
     r: int,
@@ -1089,44 +1138,277 @@ def finish_builder_round(
     append_ledger(job_dir, "auto_builder_done", round=r, engine=engine)
 
 
-def run_codex_builder_cli(job_dir: Path, r: int, prompt: str, before: bytes) -> None:
-    status, _snap, work_file, rounds = current_paths(job_dir)
-    source_before = file_bytes(source_path_from_status(status))
-    codex = command_path("codex", "/Applications/Codex.app/Contents/Resources/codex")
-    append_ledger(job_dir, "auto_builder_codex_fallback_start", round=r)
-    update_status(job_dir, auto_running=True, auto_phase=f"builder_codex_r{r}", auto_error=None)
-    builder_prompt = prompt + """
+class EngineError(RuntimeError):
+    """引擎子进程失败。"""
+
+
+class EngineAuthError(EngineError):
+    """引擎因鉴权失败；编排层可据此决定是否回退到其他引擎。"""
+
+
+class EngineAdapter:
+    """统一的引擎接口：检测、登录状态、改稿（build）、审稿（review）。
+
+    适配器只负责"怎么调某个 AI"；状态机、轮次推进、Judge 都留在编排层。
+    新增引擎 = 写一个子类 + 注册进 ENGINE_CLASSES。
+    """
+
+    id = ""
+    display_name = ""
+    can_build = False
+    can_review = False
+    install_hint: dict[str, str] = {}
+
+    def __init__(self, options: dict[str, Any] | None = None) -> None:
+        self.options = dict(options or {})
+
+    def timeout(self) -> int:
+        try:
+            return int(self.options.get("timeout_sec") or 900)
+        except (TypeError, ValueError):
+            return 900
+
+    def detect(self) -> str | None:
+        raise NotImplementedError
+
+    def version(self) -> str | None:
+        path = self.detect()
+        if not path:
+            return None
+        try:
+            proc = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10)
+        except Exception:
+            return None
+        out = (proc.stdout or proc.stderr or "").strip()
+        return out.splitlines()[0] if out else None
+
+    def login_state(self) -> dict[str, Any]:
+        return {"ok": None, "hint": ""}
+
+    def build(self, job_dir: Path, r: int, prompt: str, before: bytes, model: str | None = None) -> None:
+        raise NotImplementedError
+
+    def review(self, job_dir: Path, r: int, prompt: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+class ClaudeAdapter(EngineAdapter):
+    id = "claude"
+    display_name = "Claude Code"
+    can_build = True
+    can_review = False
+    install_hint = {
+        "cmd": "npm install -g @anthropic-ai/claude-code",
+        "doc_url": "https://docs.anthropic.com/en/docs/claude-code",
+    }
+
+    def detect(self) -> str | None:
+        configured = self.options.get("path")
+        if configured and Path(configured).exists():
+            return str(configured)
+        return shutil.which("claude")
+
+    def login_state(self) -> dict[str, Any]:
+        if not self.detect():
+            return {"ok": False, "hint": "未检测到 claude CLI"}
+        # Claude 登录状态没有便宜的本地探测；首次自动运行时校验，失败会回退 Codex Builder。
+        return {"ok": None, "hint": "登录状态在首次自动运行时校验"}
+
+    def build(self, job_dir: Path, r: int, prompt: str, before: bytes, model: str | None = None) -> None:
+        status, _snap, work_file, rounds = current_paths(job_dir)
+        source_before = file_bytes(source_path_from_status(status))
+        claude = self.detect()
+        if not claude:
+            raise EngineError("未检测到 claude CLI")
+        model = model or self.options.get("default_model") or "sonnet"
+        append_ledger(job_dir, "auto_builder_start", round=r, model=model)
+        update_status(job_dir, auto_running=True, auto_phase=f"builder_r{r}", auto_error=None)
+        cmd = [
+            claude,
+            "-p",
+            prompt,
+            "--model",
+            model,
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools",
+            "Read,Edit,Write",
+            "--max-budget-usd",
+            "1.00",
+        ]
+        proc = subprocess.run(
+            cmd,
+            cwd=str(job_dir),
+            capture_output=True,
+            text=True,
+            timeout=self.timeout(),
+            env=_clean_env_no_anthropic_api(),  # 硬红线：禁用 ANTHROPIC_API_KEY，强制 OAuth
+        )
+        (rounds / f"r{r:03d}.builder.stdout").write_text(proc.stdout or "", encoding="utf-8")
+        (rounds / f"r{r:03d}.builder.stderr").write_text(proc.stderr or "", encoding="utf-8")
+        assert_source_unchanged_or_restore(job_dir, source_before, "Claude Builder")
+        if proc.returncode != 0:
+            err_text = proc.stderr or proc.stdout or ""
+            if "Failed to authenticate" in err_text or "401" in err_text:
+                raise EngineAuthError(f"Claude 鉴权失败: {err_text[:800]}")
+            append_ledger(job_dir, "auto_builder_failed", round=r, returncode=proc.returncode)
+            raise EngineError(f"Claude Builder 失败 rc={proc.returncode}: {err_text[:800]}")
+        finish_builder_round(job_dir, r, work_file, before, proc.stdout or "", "Claude")
+
+
+class CodexAdapter(EngineAdapter):
+    id = "codex"
+    display_name = "Codex"
+    can_build = True
+    can_review = True
+    APP_BUNDLE = "/Applications/Codex.app/Contents/Resources/codex"
+    install_hint = {
+        "cmd": "codex login",
+        "doc_url": "https://developers.openai.com/codex",
+    }
+
+    def detect(self) -> str | None:
+        configured = self.options.get("path")
+        if configured and Path(configured).exists():
+            return str(configured)
+        found = shutil.which("codex")
+        if found:
+            return found
+        if Path(self.APP_BUNDLE).exists():
+            return self.APP_BUNDLE
+        return None
+
+    def login_state(self) -> dict[str, Any]:
+        if not self.detect():
+            return {"ok": False, "hint": "未检测到 codex CLI"}
+        if (Path.home() / ".codex" / "auth.json").exists():
+            return {"ok": True, "hint": ""}
+        return {"ok": False, "hint": "运行 codex login 完成登录"}
+
+    def build(self, job_dir: Path, r: int, prompt: str, before: bytes, model: str | None = None) -> None:
+        # Codex Builder 目前只作为 Claude 鉴权失败的回退路径，
+        # 保留 v1 的 ledger 事件名，老 job 的留痕语义不变。
+        status, _snap, work_file, rounds = current_paths(job_dir)
+        source_before = file_bytes(source_path_from_status(status))
+        codex = self.detect()
+        if not codex:
+            raise EngineError("未检测到 codex CLI")
+        append_ledger(job_dir, "auto_builder_codex_fallback_start", round=r)
+        update_status(job_dir, auto_running=True, auto_phase=f"builder_codex_r{r}", auto_error=None)
+        builder_prompt = prompt + """
 
 # 自动执行要求
 
 你现在作为 Builder 自动执行。必须直接修改 worktree 里的目标文件，并写入本轮 builder.json。
 不要等待用户确认，不要只给建议。只允许在本 job 目录内写文件。
 """
-    cmd = [
-        codex,
-        "exec",
-        "-C",
-        str(job_dir),
-        "-s",
-        "workspace-write",
-        "--skip-git-repo-check",
-        "--ignore-rules",
-        "-",
-    ]
-    proc = subprocess.run(
-        cmd,
-        input=builder_prompt,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    (rounds / f"r{r:03d}.builder.codex.stdout").write_text(proc.stdout or "", encoding="utf-8")
-    (rounds / f"r{r:03d}.builder.codex.stderr").write_text(proc.stderr or "", encoding="utf-8")
-    assert_source_unchanged_or_restore(job_dir, source_before, "Codex Builder")
-    if proc.returncode != 0:
-        append_ledger(job_dir, "auto_builder_codex_fallback_failed", round=r, returncode=proc.returncode)
-        raise RuntimeError(f"Codex Builder 失败 rc={proc.returncode}: {(proc.stderr or proc.stdout)[:800]}")
-    finish_builder_round(job_dir, r, work_file, before, proc.stdout or "", "Codex")
+        cmd = [
+            codex,
+            "exec",
+            "-C",
+            str(job_dir),
+            "-s",
+            "workspace-write",
+            "--skip-git-repo-check",
+            "--ignore-rules",
+            "-",
+        ]
+        proc = subprocess.run(
+            cmd,
+            input=builder_prompt,
+            capture_output=True,
+            text=True,
+            timeout=self.timeout(),
+        )
+        (rounds / f"r{r:03d}.builder.codex.stdout").write_text(proc.stdout or "", encoding="utf-8")
+        (rounds / f"r{r:03d}.builder.codex.stderr").write_text(proc.stderr or "", encoding="utf-8")
+        assert_source_unchanged_or_restore(job_dir, source_before, "Codex Builder")
+        if proc.returncode != 0:
+            append_ledger(job_dir, "auto_builder_codex_fallback_failed", round=r, returncode=proc.returncode)
+            raise EngineError(f"Codex Builder 失败 rc={proc.returncode}: {(proc.stderr or proc.stdout)[:800]}")
+        finish_builder_round(job_dir, r, work_file, before, proc.stdout or "", "Codex")
+
+    def review(self, job_dir: Path, r: int, prompt: str) -> dict[str, Any]:
+        rounds = job_dir / "rounds"
+        codex = self.detect()
+        if not codex:
+            raise EngineError("未检测到 codex CLI")
+        schema_path = rounds / f"r{r:03d}.reviewer.schema.json"
+        schema_path.write_text(json.dumps(REVIEWER_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8")
+        raw_path = rounds / f"r{r:03d}.reviewer.raw"
+        append_ledger(job_dir, "auto_reviewer_start", round=r)
+        update_status(job_dir, auto_running=True, auto_phase=f"reviewer_r{r}", auto_error=None)
+        cmd = [
+            codex,
+            "exec",
+            "-C",
+            str(job_dir),
+            "-s",
+            "read-only",
+            "--skip-git-repo-check",
+            "--output-schema",
+            str(schema_path),
+            "-o",
+            str(raw_path),
+            "--ignore-rules",
+            "-",
+        ]
+        proc = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=self.timeout(),
+        )
+        (rounds / f"r{r:03d}.reviewer.stdout").write_text(proc.stdout or "", encoding="utf-8")
+        (rounds / f"r{r:03d}.reviewer.stderr").write_text(proc.stderr or "", encoding="utf-8")
+        if proc.returncode != 0:
+            append_ledger(job_dir, "auto_reviewer_failed", round=r, returncode=proc.returncode)
+            raise EngineError(f"Codex Reviewer 失败 rc={proc.returncode}: {(proc.stderr or proc.stdout)[:800]}")
+        raw = file_text(raw_path) or proc.stdout or ""
+        review = extract_json_object(raw)
+        # Normalize required fields enough for deterministic judge.
+        review.setdefault("round", r)
+        review.setdefault("actor", "reviewer")
+        review.setdefault("issues", {"p0": [], "p1": [], "p2": []})
+        review.setdefault("scores", {"requirement_fit": 0, "correctness": 0, "clarity": 0, "risk": 100})
+        review.setdefault("verdict", "needs_revision")
+        review.setdefault("summary", "")
+        return review
+
+
+ENGINE_CLASSES: dict[str, type[EngineAdapter]] = {
+    "claude": ClaudeAdapter,
+    "codex": CodexAdapter,
+}
+ENGINES: dict[str, EngineAdapter] = {}
+
+
+def init_engines(config: dict[str, Any]) -> None:
+    ENGINES.clear()
+    for eid, cls in ENGINE_CLASSES.items():
+        options = (config.get("engines") or {}).get(eid) or {}
+        if options.get("enabled", True):
+            ENGINES[eid] = cls(options)
+
+
+init_engines(CONFIG)
+
+
+def builder_engine_for(status: dict[str, Any]) -> EngineAdapter:
+    eid = status.get("builder_engine") or CONFIG.get("default_builder", "claude")
+    engine = ENGINES.get(eid)
+    if not engine or not engine.can_build:
+        raise ValueError(f"Builder 引擎不可用：{eid}")
+    return engine
+
+
+def reviewer_engine_for(status: dict[str, Any]) -> EngineAdapter:
+    eid = status.get("reviewer_engine") or CONFIG.get("default_reviewer", "codex")
+    engine = ENGINES.get(eid)
+    if not engine or not engine.can_review:
+        raise ValueError(f"Reviewer 引擎不可用：{eid}")
+    return engine
 
 
 def _clean_env_no_anthropic_api() -> dict:
@@ -1152,47 +1434,17 @@ def run_builder_cli(job_dir: Path, model: str = DEFAULT_BUILDER_MODEL) -> None:
     if not prompt_path.exists():
         build_builder_prompt(job_dir)
     prompt = file_text(prompt_path)
-    builder_json_path = rounds / f"r{r:03d}.builder.json"
     before = work_file.read_bytes() if work_file.exists() else b""
-    source_before = file_bytes(source_path_from_status(status))
-
-    claude = command_path("claude")
-    append_ledger(job_dir, "auto_builder_start", round=r, model=model)
-    update_status(job_dir, auto_running=True, auto_phase=f"builder_r{r}", auto_error=None)
-    cmd = [
-        claude,
-        "-p",
-        prompt,
-        "--model",
-        model,
-        "--permission-mode",
-        "acceptEdits",
-        "--allowedTools",
-        "Read,Edit,Write",
-        "--max-budget-usd",
-        "1.00",
-    ]
-    proc = subprocess.run(
-        cmd,
-        cwd=str(job_dir),
-        capture_output=True,
-        text=True,
-        timeout=900,
-        env=_clean_env_no_anthropic_api(),  # 硬红线：禁用 ANTHROPIC_API_KEY，强制 OAuth
-    )
-    (rounds / f"r{r:03d}.builder.stdout").write_text(proc.stdout or "", encoding="utf-8")
-    (rounds / f"r{r:03d}.builder.stderr").write_text(proc.stderr or "", encoding="utf-8")
-    assert_source_unchanged_or_restore(job_dir, source_before, "Claude Builder")
-    if proc.returncode != 0:
-        err_text = (proc.stderr or proc.stdout or "")
-        if "Failed to authenticate" in err_text or "401" in err_text:
+    engine = builder_engine_for(status)
+    try:
+        engine.build(job_dir, r, prompt, before, model=model)
+    except EngineAuthError:
+        fallback = ENGINES.get("codex")
+        if engine.id == "claude" and fallback is not None and fallback.can_build:
             append_ledger(job_dir, "auto_builder_claude_auth_failed_fallback_codex", round=r)
-            run_codex_builder_cli(job_dir, r, prompt, before)
+            fallback.build(job_dir, r, prompt, before)
             return
-        append_ledger(job_dir, "auto_builder_failed", round=r, returncode=proc.returncode)
-        raise RuntimeError(f"Claude Builder 失败 rc={proc.returncode}: {err_text[:800]}")
-
-    finish_builder_round(job_dir, r, work_file, before, proc.stdout or "", "Claude")
+        raise
 
 
 def run_reviewer_cli(job_dir: Path) -> str:
@@ -1204,50 +1456,8 @@ def run_reviewer_cli(job_dir: Path) -> str:
     prompt = file_text(prompt_path)
     if not prompt:
         raise ValueError(f"缺少 Reviewer prompt: {prompt_path}")
-
-    schema_path = rounds / f"r{r:03d}.reviewer.schema.json"
-    schema_path.write_text(json.dumps(REVIEWER_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8")
-    raw_path = rounds / f"r{r:03d}.reviewer.raw"
-    codex = command_path("codex", "/Applications/Codex.app/Contents/Resources/codex")
-    append_ledger(job_dir, "auto_reviewer_start", round=r)
-    update_status(job_dir, auto_running=True, auto_phase=f"reviewer_r{r}", auto_error=None)
-    cmd = [
-        codex,
-        "exec",
-        "-C",
-        str(job_dir),
-        "-s",
-        "read-only",
-        "--skip-git-repo-check",
-        "--output-schema",
-        str(schema_path),
-        "-o",
-        str(raw_path),
-        "--ignore-rules",
-        "-",
-    ]
-    proc = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    (rounds / f"r{r:03d}.reviewer.stdout").write_text(proc.stdout or "", encoding="utf-8")
-    (rounds / f"r{r:03d}.reviewer.stderr").write_text(proc.stderr or "", encoding="utf-8")
-    if proc.returncode != 0:
-        append_ledger(job_dir, "auto_reviewer_failed", round=r, returncode=proc.returncode)
-        raise RuntimeError(f"Codex Reviewer 失败 rc={proc.returncode}: {(proc.stderr or proc.stdout)[:800]}")
-
-    raw = file_text(raw_path) or proc.stdout or ""
-    review = extract_json_object(raw)
-    # Normalize required fields enough for deterministic judge.
-    review.setdefault("round", r)
-    review.setdefault("actor", "reviewer")
-    review.setdefault("issues", {"p0": [], "p1": [], "p2": []})
-    review.setdefault("scores", {"requirement_fit": 0, "correctness": 0, "clarity": 0, "risk": 100})
-    review.setdefault("verdict", "needs_revision")
-    review.setdefault("summary", "")
+    engine = reviewer_engine_for(status)
+    review = engine.review(job_dir, r, prompt)
     payload = json.dumps(review, ensure_ascii=False)
     append_ledger(job_dir, "auto_reviewer_done", round=r)
     return payload
@@ -1301,6 +1511,35 @@ def start_auto_run(job_dir: Path, builder_model: str = DEFAULT_BUILDER_MODEL) ->
         update_status(job_dir, auto_running=True, manual_mode=False, auto_phase="queued", auto_error=None)
         thread.start()
     return job_summary(job_dir)
+
+
+def migrate_status_dict(status: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """把旧版 STATUS 升到当前 schema。v1 job 没有 schema_version，引擎固定 Claude/Codex。"""
+    try:
+        version = int(status.get("schema_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    if version >= STATUS_SCHEMA_VERSION:
+        return status, False
+    status.setdefault("builder_engine", "claude")
+    status.setdefault("reviewer_engine", "codex")
+    status["schema_version"] = STATUS_SCHEMA_VERSION
+    return status, True
+
+
+def migrate_jobs() -> None:
+    JOBS_ROOT.mkdir(parents=True, exist_ok=True)
+    for job_dir in JOBS_ROOT.iterdir():
+        if not job_dir.is_dir():
+            continue
+        status_path = job_dir / "STATUS.json"
+        status = read_json(status_path, {})
+        if status.get("mode") != "sparring":
+            continue
+        status, changed = migrate_status_dict(status)
+        if changed:
+            write_json(status_path, status)
+            append_ledger(job_dir, "status_schema_migrated", schema_version=STATUS_SCHEMA_VERSION)
 
 
 def reset_stale_auto_runs() -> None:
@@ -2560,6 +2799,7 @@ def main() -> None:
     if args.workspace_root:
         WORKSPACE_ROOT = Path(args.workspace_root).expanduser().resolve()
     JOBS_ROOT.mkdir(parents=True, exist_ok=True)
+    migrate_jobs()
     reset_stale_auto_runs()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Y1 Sparring Bus running at http://{args.host}:{args.port}/sparring", flush=True)

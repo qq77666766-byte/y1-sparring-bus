@@ -6,7 +6,12 @@ on:
 
 jobs:
   local-checks:
-    runs-on: macos-latest
+    # These checks (py_compile, shell syntax, stdlib HTTP smoke test) are all
+    # platform-independent. GitHub's macos-latest arm64 runners intermittently
+    # drop loopback connections, which made the smoke test time out even though
+    # the server starts fine locally and on Linux. Run on the reliable Linux
+    # runner; the product itself remains macOS-first for real users.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +24,9 @@ jobs:
 
       - name: Shell syntax
         run: bash -n scripts/*.sh
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests
 
       - name: Backend smoke test
         run: bash scripts/smoke-test.sh 8876
