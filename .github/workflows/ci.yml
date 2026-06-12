@@ -25,5 +25,8 @@ jobs:
       - name: Shell syntax
         run: bash -n scripts/*.sh
 
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests
+
       - name: Backend smoke test
         run: bash scripts/smoke-test.sh 8876
