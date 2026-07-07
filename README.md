@@ -10,7 +10,7 @@ Y1 Sparring Bus 是一个本机 AI 左右互搏控制台，适合改方案、汇
 ![banner](assets/banner.svg)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.0-black)](#v10--v10)
+[![Version](https://img.shields.io/badge/version-v1.1-black)](#v11--v11)
 [![macOS](https://img.shields.io/badge/macOS-local%20first-black)](#requirements--系统要求)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](#quickstart--快速开始)
 [![No API Key](https://img.shields.io/badge/API%20keys-not%20used-green)](#why-it-matters--为什么重要)
@@ -42,12 +42,16 @@ Y1 Sparring Bus adds a second mind and a stop rule:
 Y1 Sparring Bus 增加了第二个模型和明确的停止规则：
 
 ```text
-your file + one clear goal
+your file (or pasted text) + one clear goal
   -> Claude Builder rewrites an isolated copy
+     (each round it must fix or rebut every open issue)
   -> local Runner checks obvious risks
-  -> Codex Reviewer scores and flags P0/P1/P2 issues
-  -> deterministic Judge decides continue / stop / escalate
-  -> you inspect FINAL_REVIEW + diff, then merge or abandon
+  -> Codex Reviewer reviews with verbatim evidence quotes,
+     arbitrates Builder rebuttals, files P0/P1/P2 issues with IDs
+  -> issue ledger tracks every issue until fixed or withdrawn
+  -> deterministic Judge stops only when the ledger P0/P1 is fully closed,
+     and escalates early on stalemate (2 rounds without progress)
+  -> you inspect FINAL_REVIEW + diff, then merge / export a copy / abandon
 ```
 
 The result is not only a better draft. You also get an audit trail showing what changed, what risks remain, and why the loop stopped.
@@ -107,12 +111,13 @@ jobs/<job_id>/
   TASK.md                 # frozen goal and acceptance gates / 固化目标和验收门槛
   STATUS.json             # current state and score trend / 当前状态和评分轨迹
   ledger.jsonl            # append-only event log / 追加式事件日志
+  ISSUES.json             # issue closed-loop ledger / 问题闭环台账
   INPUT_SNAPSHOT/<file>   # original frozen copy / 原文快照
   worktree/<file>         # AI-edited copy / AI 修改副本
-  rounds/                 # prompts, patches, reviews, judge records / 每轮记录
+  rounds/                 # prompts, patches, reviews, rebuttals, judge records / 每轮记录
   FINAL.md                # final candidate / 最终候选稿
   FINAL.diff              # original vs final / 原文与最终稿差异
-  FINAL_REVIEW.md         # human decision brief / 给人看的决策简报
+  FINAL_REVIEW.md         # human decision brief + issue accounting / 决策简报与闭环账目
 ```
 
 The most useful file is `FINAL_REVIEW.md`: it tells you what changed, what score it reached, what issues remain, and whether the system recommends merge, another round, or escalation.
@@ -188,6 +193,29 @@ bash scripts/uninstall-service.sh
 ```
 
 Details / 详情：[docs/BACKGROUND_SERVICE.md](docs/BACKGROUND_SERVICE.md)
+
+## v1.1 / v1.1
+
+The closed-loop upgrade. The sparring loop is now a real adversarial workflow, not a one-way "reviewer says, builder obeys" pipeline:
+
+闭环升级。互搏从"审稿人说什么、改稿人照做"的单向流水线，变成了真正有对抗、有仲裁、有闭环的工作流：
+
+- **Issue ledger / 问题闭环台账** — every issue gets an ID and a lifecycle (`open -> resolved / withdrawn / must_fix`). Judge only stops when ledger P0/P1 is fully closed, not when the Reviewer happens to report zero.  
+  每条问题有 ID 和全生命周期；Judge 只认台账闭环，不再信 Reviewer 当轮报数。
+- **Evidence-cited review / 引证审查** — new issues must quote the current file verbatim; quotes are machine-verified, unverifiable P0/P1 are publicly flagged "no evidence".  
+  新问题必须引用原文作为证据，系统机器核验，空口问题会被公示"无证据"。
+- **Builder rebuttal + arbitration / 反驳与仲裁** — the Builder may dispute an issue instead of obeying; the Reviewer arbitrates. Two upheld disputes turn the issue into non-disputable `must_fix`.  
+  Builder 可以反驳而不是照单全收，Reviewer 仲裁；反驳两次被驳回则升级为"必须修"。
+- **Stalemate detection / 僵局检测** — two consecutive rounds without score or blocker progress escalate to the human early instead of burning rounds.  
+  连续 2 轮无实质进展就提前升级给人，不空烧轮数和费用。
+- **Paste-to-start / 贴文本开任务** — paste raw text in the UI; it is materialized under `sparring-inbox/` in your workspace.  
+  不用先存文件，直接把全文贴进页面就能开始。
+- **Done notifications / 完成通知** — macOS system notification when an auto run reaches a terminal state or fails.  
+  自动互搏跑完或失败时发 macOS 系统通知。
+- **Export a copy / 另存副本** — copy the final draft to the clipboard or save it as a sibling file without touching the original.  
+  最终稿可复制、可另存副本，不必覆盖原文件。
+- **Loop-first UI / 闭环化界面** — the job page is redesigned around the loop: a live workflow diagram (snapshot -> Builder -> Runner -> Reviewer -> Judge -> human, with the return edge), plus the issue ledger table showing every issue from raised to closed.  
+  任务页围绕闭环重新设计：实时流程图（含回环）+ 问题从提出到闭环的台账表。
 
 ## v1.0 / v1.0
 

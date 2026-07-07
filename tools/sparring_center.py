@@ -37,10 +37,22 @@ AUTO_THREADS: dict[str, threading.Thread] = {}
 AUTO_LOCK = threading.Lock()
 
 
+# 问题必须带证据：desc 说问题，evidence 是当前文件里的原文引用（用于机器核验），location 是大致位置。
+REVIEWER_ISSUE_ITEM = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["desc", "evidence", "location"],
+    "properties": {
+        "desc": {"type": "string"},
+        "evidence": {"type": "string"},
+        "location": {"type": "string"},
+    },
+}
+
 REVIEWER_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["round", "actor", "issues", "scores", "verdict", "summary"],
+    "required": ["round", "actor", "issues", "issue_resolutions", "scores", "verdict", "summary"],
     "properties": {
         "round": {"type": "integer"},
         "actor": {"type": "string", "enum": ["reviewer"]},
@@ -49,9 +61,22 @@ REVIEWER_SCHEMA = {
             "additionalProperties": False,
             "required": ["p0", "p1", "p2"],
             "properties": {
-                "p0": {"type": "array", "items": {"type": "string"}},
-                "p1": {"type": "array", "items": {"type": "string"}},
-                "p2": {"type": "array", "items": {"type": "string"}},
+                "p0": {"type": "array", "items": REVIEWER_ISSUE_ITEM},
+                "p1": {"type": "array", "items": REVIEWER_ISSUE_ITEM},
+                "p2": {"type": "array", "items": REVIEWER_ISSUE_ITEM},
+            },
+        },
+        "issue_resolutions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["id", "status", "note"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "status": {"type": "string", "enum": ["resolved", "persisting", "withdrawn"]},
+                    "note": {"type": "string"},
+                },
             },
         },
         "scores": {
@@ -298,14 +323,32 @@ def browse_dir(raw_path: str | None) -> dict[str, Any]:
     }
 
 
-def preflight_check(source_path: str, goal: str) -> dict[str, Any]:
-    """开始互搏前的预检：文件 / 目标 / 一致性 / 内容预览。"""
+def preflight_check(source_path: str, goal: str, content: str = "", title: str = "") -> dict[str, Any]:
+    """开始互搏前的预检：文件 / 目标 / 一致性 / 内容预览。content 非空时走"贴文本"模式。"""
     checks: list[dict[str, Any]] = []
     preview = ""
     src: Path | None = None
 
+    paste_mode = bool((content or "").strip())
+    if paste_mode:
+        text = content
+        size = len(text.encode("utf-8"))
+        checks.append({"item": "粘贴内容", "status": "pass", "detail": f"{size} bytes"})
+        if size > WARN_SOURCE_BYTES:
+            checks.append({"item": "内容大小", "status": "warn",
+                           "detail": f"{size} bytes，长文本可能触发 Claude CLI 单轮保护阈值"})
+        if not (title or "").strip():
+            checks.append({"item": "标题", "status": "warn", "detail": "未填，将用 pasted 作为文件名"})
+        else:
+            checks.append({"item": "标题", "status": "pass", "detail": title.strip()[:60]})
+        checks.append({"item": "落盘位置", "status": "pass",
+                       "detail": f"{INBOX_DIRNAME}/（工作区内，自动创建）"})
+        preview = text[:500]
+
     raw = (source_path or "").strip()
-    if not raw:
+    if paste_mode:
+        pass
+    elif not raw:
         checks.append({"item": "文件路径", "status": "fail", "detail": "未填写"})
     else:
         try:
@@ -374,6 +417,52 @@ def preflight_check(source_path: str, goal: str) -> dict[str, Any]:
         "preview": preview,
         "warn_count": len(warns),
     }
+
+
+INBOX_DIRNAME = "sparring-inbox"
+
+
+def materialize_pasted_content(title: str, content: str) -> Path:
+    """把用户粘贴的文本落盘到工作区 sparring-inbox/，作为互搏源文件。"""
+    if not (content or "").strip():
+        raise ValueError("粘贴内容不能为空")
+    inbox = WORKSPACE_ROOT / INBOX_DIRNAME
+    inbox.mkdir(parents=True, exist_ok=True)
+    # 标题保留中文（slug 只认 ASCII，会把中文标题剥成空）
+    safe_title = re.sub(r"[^\w一-鿿.-]+", "-", (title or "").strip()).strip("-")[:48] or "pasted"
+    name = f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{safe_title}.md"
+    p = inbox / name
+    p.write_text(content, encoding="utf-8")
+    return p
+
+
+def notify_user(title: str, message: str) -> None:
+    """macOS 系统通知（osascript 自带，非 macOS / 失败静默跳过）。互搏一轮要几分钟，人多半走开了。"""
+    osa = shutil.which("osascript")
+    if not osa:
+        return
+    try:
+        script = f"display notification {json.dumps(message[:180], ensure_ascii=False)} " \
+                 f"with title {json.dumps(title[:80], ensure_ascii=False)} sound name \"Glass\""
+        subprocess.run([osa, "-e", script], capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+
+def export_final(job_dir: Path) -> dict[str, Any]:
+    """把最终稿另存为原文件旁边的副本，不动原文件。适合结果要贴去别处的场景。"""
+    status, _snap, work_file, _rounds = current_paths(job_dir)
+    final = job_dir / "FINAL.md"
+    src_of_copy = final if final.exists() else work_file
+    if not src_of_copy.exists():
+        raise ValueError("还没有可导出的稿件（FINAL.md 和 worktree 都不存在）")
+    source = source_path_from_status(status)
+    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    suffix = source.suffix or ".md"
+    dest = source.parent / f"{source.stem}.sparring-{ts}{suffix}"
+    dest.write_text(file_text(src_of_copy), encoding="utf-8")
+    append_ledger(job_dir, "final_exported_copy", dest=str(dest))
+    return {"dest": str(dest), "job": job_summary(job_dir)}
 
 
 def list_jobs() -> list[dict[str, Any]]:
@@ -490,6 +579,7 @@ def build_builder_prompt(job_dir: Path) -> Path:
     r = int(status.get("round", 1))
     previous_review = file_text(rounds / f"r{r-1:03d}.reviewer.json") if r > 1 else "(first round)"
     previous_judge = file_text(rounds / f"r{r-1:03d}.judge.json") if r > 1 else "(first round)"
+    ledger_brief = issue_ledger_brief(load_issues(job_dir))
     prompt = f"""你是 Y1 Sparring Bus 的 Builder。
 
 你的任务：只修改隔离副本，不碰原文件。
@@ -499,6 +589,17 @@ def build_builder_prompt(job_dir: Path) -> Path:
 - 目标文件：{work_file}
 
 当前轮次：Round {r}
+
+## 待闭环问题台账（必须逐条处理）
+
+{ledger_brief}
+
+对每一条 open 问题，你只有两种处理方式：
+1. 修复它（在 builder.json 的 addressed_issues 里写上它的 ID）；
+2. 有理有据地反驳它（在 builder.json 的 disputes 里写 ID + 理由）。
+   标记"必须修，不可再反驳"的问题不允许反驳，只能修。
+不允许无视任何 open 问题。反驳会交给 Reviewer 仲裁：Reviewer 撤回则问题关闭；
+Reviewer 坚持 {DISPUTE_UPHOLD_LIMIT} 次后问题升级为"必须修"。
 
 上一轮 Reviewer：
 ```json
@@ -529,7 +630,10 @@ JSON 格式：
   "changes": [
     {{"location": "位置", "what": "改了什么", "why": "为什么改"}}
   ],
-  "addressed_issues": [],
+  "addressed_issues": ["修复了的问题 ID，例如 R1-P1-1"],
+  "disputes": [
+    {{"id": "要反驳的问题 ID", "reason": "为什么这个问题不成立（引用原文或任务目标）"}}
+  ],
   "remaining_concerns": []
 }}
 
@@ -629,6 +733,13 @@ def prepare_reviewer(job_dir: Path) -> dict[str, Any]:
     runner_path = rounds / f"r{r:03d}.runner.log"
     runner_path.write_text(checks_log, encoding="utf-8")
 
+    # Builder 可能反驳了台账里的问题：先登记，交给 Reviewer 仲裁
+    disputes = apply_builder_disputes(job_dir, r)
+    ledger_brief = issue_ledger_brief(load_issues(job_dir))
+    dispute_brief = "\n".join(
+        f"- [{d['id']}] Builder 反驳理由：{d['reason']}" for d in disputes
+    ) if disputes else "(本轮 Builder 没有反驳任何问题)"
+
     builder_json = file_text(rounds / f"r{r:03d}.builder.json") or "(builder json missing)"
     prompt = f"""你是 Y1 Sparring Bus 的 Reviewer。你只审查，不修改文件。
 
@@ -638,6 +749,24 @@ def prepare_reviewer(job_dir: Path) -> dict[str, Any]:
 - 本轮 diff: {patch_path}
 - Runner log: {runner_path}
 - Builder 自述: {rounds / f"r{r:03d}.builder.json"}
+
+## 待闭环问题台账（每条都必须表态）
+
+{ledger_brief}
+
+## Builder 本轮的反驳（需要你仲裁）
+
+{dispute_brief}
+
+对台账里每一条 open 问题，你必须在 issue_resolutions 里给出一条裁定：
+- "resolved"：你核对当前文件后确认已修好；
+- "persisting"：还没修好（或反驳不成立），说明理由；
+- "withdrawn"：你撤回这个问题（Builder 反驳成立，或你重新判断后认为不成立）。
+不要把台账里已有的问题重新写进 issues 的新问题列表。
+
+新问题的硬要求：每条必须带 evidence —— 从当前文件里逐字引用一段原文作为证据
+（系统会机器核验引用是否真实存在；引用不存在的 P0/P1 会被标记为"无证据"并公示）。
+不允许只凭印象打分或凭空造问题。
 
 本轮 Builder 自述：
 ```json
@@ -661,10 +790,13 @@ Runner 结果：
   "round": {r},
   "actor": "reviewer",
   "issues": {{
-    "p0": [],
+    "p0": [{{"desc": "问题描述", "evidence": "当前文件原文引用", "location": "大致位置"}}],
     "p1": [],
     "p2": []
   }},
+  "issue_resolutions": [
+    {{"id": "台账问题 ID，如 R1-P1-1", "status": "resolved | persisting | withdrawn", "note": "一句话理由"}}
+  ],
   "scores": {{
     "requirement_fit": 0,
     "correctness": 0,
@@ -696,6 +828,186 @@ def issue_count(issues: Any, key: str) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 问题闭环台账（ISSUES.json）
+#
+# 互搏的"闭环"由它承载：Reviewer 提出的每个问题拿到唯一 ID，之后每一轮都必须
+# 有明确去向 —— 被 Builder 修掉（resolved）、被 Builder 反驳且 Reviewer 撤回
+# （withdrawn）、或坚持存在（persisting）。Judge 只认台账里的 open 问题，
+# 不再单看 Reviewer 当轮报了几条。
+# ---------------------------------------------------------------------------
+
+ISSUE_OPEN_STATES = {"open", "must_fix"}
+DISPUTE_UPHOLD_LIMIT = 2  # Builder 反驳后 Reviewer 坚持 2 次 → 定为 must_fix，不再可反驳
+
+
+def load_issues(job_dir: Path) -> list[dict[str, Any]]:
+    data = read_json(job_dir / "ISSUES.json", [])
+    return data if isinstance(data, list) else []
+
+
+def save_issues(job_dir: Path, issues: list[dict[str, Any]]) -> None:
+    write_json(job_dir / "ISSUES.json", issues)
+
+
+def open_issue_list(issues: list[dict[str, Any]], severities: tuple[str, ...] = ("p0", "p1", "p2")) -> list[dict[str, Any]]:
+    return [i for i in issues if i.get("status") in ISSUE_OPEN_STATES and i.get("severity") in severities]
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"\s+", "", s or "")
+
+
+def evidence_found_in(evidence: str, text: str) -> bool:
+    """证据必须是目标文件里的原文引用（忽略空白差异）。太短的引用不算证据。"""
+    ev = _norm_text(evidence)
+    if len(ev) < 6:
+        return False
+    return ev[:400] in _norm_text(text)
+
+
+def normalize_issue_item(raw: Any) -> dict[str, str]:
+    """兼容手动接力时贴回来的纯字符串问题。"""
+    if isinstance(raw, dict):
+        return {
+            "desc": str(raw.get("desc", "") or "")[:500],
+            "evidence": str(raw.get("evidence", "") or "")[:600],
+            "location": str(raw.get("location", "") or "")[:120],
+        }
+    return {"desc": str(raw)[:500], "evidence": "", "location": ""}
+
+
+def apply_builder_disputes(job_dir: Path, r: int) -> list[dict[str, Any]]:
+    """读取本轮 builder.json 的 disputes，把被反驳的 open 问题标记为待仲裁。
+
+    must_fix（已被 Reviewer 两次驳回反驳）不可再反驳。返回本轮生效的反驳列表。
+    """
+    builder = read_json(job_dir / "rounds" / f"r{r:03d}.builder.json", {})
+    disputes = builder.get("disputes") if isinstance(builder, dict) else None
+    if not isinstance(disputes, list) or not disputes:
+        return []
+    issues = load_issues(job_dir)
+    by_id = {i.get("id"): i for i in issues}
+    applied = []
+    for d in disputes:
+        if not isinstance(d, dict):
+            continue
+        issue = by_id.get(str(d.get("id", "")))
+        if not issue or issue.get("status") != "open":
+            continue
+        issue["disputed_pending"] = True
+        issue["disputed_round"] = r
+        issue["dispute_reason"] = str(d.get("reason", "") or "")[:500]
+        applied.append({"id": issue["id"], "reason": issue["dispute_reason"]})
+    if applied:
+        save_issues(job_dir, issues)
+        append_ledger(job_dir, "builder_disputed_issues", round=r,
+                      ids=[a["id"] for a in applied])
+    return applied
+
+
+def register_review_round(job_dir: Path, r: int, review: dict[str, Any], work_text: str) -> dict[str, Any]:
+    """把本轮 Reviewer 结果写进台账：先按 issue_resolutions 闭环旧问题，再登记新问题。"""
+    issues = load_issues(job_dir)
+    by_id = {i.get("id"): i for i in issues}
+    resolved = withdrawn = persisting = upheld = 0
+
+    resolutions = review.get("issue_resolutions")
+    if isinstance(resolutions, list):
+        for res in resolutions:
+            if not isinstance(res, dict):
+                continue
+            issue = by_id.get(str(res.get("id", "")))
+            if not issue or issue.get("status") not in ISSUE_OPEN_STATES:
+                continue
+            status = str(res.get("status", ""))
+            note = str(res.get("note", "") or "")[:300]
+            was_disputed = bool(issue.pop("disputed_pending", False))
+            if status == "resolved":
+                issue["status"] = "resolved"
+                issue["closed_round"] = r
+                issue["close_note"] = note
+                resolved += 1
+            elif status == "withdrawn":
+                issue["status"] = "withdrawn"
+                issue["closed_round"] = r
+                issue["close_note"] = note or ("Reviewer 接受 Builder 反驳" if was_disputed else "")
+                withdrawn += 1
+            else:  # persisting
+                persisting += 1
+                if was_disputed:
+                    issue["uphold_count"] = int(issue.get("uphold_count", 0)) + 1
+                    upheld += 1
+                    if issue["uphold_count"] >= DISPUTE_UPHOLD_LIMIT:
+                        issue["status"] = "must_fix"
+    # 反驳了但 Reviewer 没表态的：视为 persisting，反驳不成立一次
+    for issue in issues:
+        if issue.pop("disputed_pending", False):
+            issue["uphold_count"] = int(issue.get("uphold_count", 0)) + 1
+            if issue["uphold_count"] >= DISPUTE_UPHOLD_LIMIT and issue.get("status") == "open":
+                issue["status"] = "must_fix"
+
+    # 登记新问题（按 desc 去重，防止 Reviewer 把旧问题重新报一遍）
+    open_desc_keys = {_norm_text(i.get("desc", ""))[:80] for i in issues if i.get("status") in ISSUE_OPEN_STATES}
+    new_ids: list[str] = []
+    unverified = 0
+    raw_issues = review.get("issues", {}) if isinstance(review.get("issues"), dict) else {}
+    for sev in ("p0", "p1", "p2"):
+        items = raw_issues.get(sev, [])
+        if not isinstance(items, list):
+            continue
+        n = 0
+        for raw in items:
+            item = normalize_issue_item(raw)
+            if not item["desc"].strip():
+                continue
+            key = _norm_text(item["desc"])[:80]
+            if key in open_desc_keys:
+                continue  # 已在台账里开着，不重复登记
+            open_desc_keys.add(key)
+            n += 1
+            verified = evidence_found_in(item["evidence"], work_text)
+            if not verified and sev in ("p0", "p1"):
+                unverified += 1
+            record = {
+                "id": f"R{r}-{sev.upper()}-{n}",
+                "severity": sev,
+                "desc": item["desc"],
+                "evidence": item["evidence"],
+                "location": item["location"],
+                "evidence_verified": verified,
+                "status": "open",
+                "opened_round": r,
+                "uphold_count": 0,
+            }
+            issues.append(record)
+            new_ids.append(record["id"])
+
+    save_issues(job_dir, issues)
+    open_p0 = len(open_issue_list(issues, ("p0",)))
+    open_p1 = len(open_issue_list(issues, ("p1",)))
+    open_p2 = len(open_issue_list(issues, ("p2",)))
+    summary = {
+        "resolved": resolved, "withdrawn": withdrawn, "persisting": persisting,
+        "upheld_disputes": upheld, "new_ids": new_ids, "unverified_new_p0p1": unverified,
+        "open_p0": open_p0, "open_p1": open_p1, "open_p2": open_p2,
+    }
+    append_ledger(job_dir, "issue_ledger_updated", round=r, **summary)
+    return summary
+
+
+def issue_ledger_brief(issues: list[dict[str, Any]]) -> str:
+    """给 Builder / Reviewer prompt 用的台账摘要（只列 open / must_fix）。"""
+    lines = []
+    for i in open_issue_list(issues):
+        tag = "必须修，不可再反驳" if i.get("status") == "must_fix" else "可修复或反驳"
+        ev = f"｜证据: {i.get('evidence', '')[:120]}" if i.get("evidence") else "｜⚠ 无证据引用"
+        loc = f"｜位置: {i.get('location')}" if i.get("location") else ""
+        dispute = f"｜Builder 已反驳: {i.get('dispute_reason', '')[:120]}" if i.get("disputed_pending") else ""
+        lines.append(f"- [{i['id']}] ({i['severity'].upper()}·{tag}) {i.get('desc', '')}{loc}{ev}{dispute}")
+    return "\n".join(lines) if lines else "(台账当前没有未闭环问题)"
+
+
 def save_review_and_judge(job_dir: Path, reviewer_payload: str) -> dict[str, Any]:
     status, _snap, work_file, rounds = current_paths(job_dir)
     if status.get("state") != "WAIT_REVIEWER":
@@ -710,6 +1022,10 @@ def save_review_and_judge(job_dir: Path, reviewer_payload: str) -> dict[str, Any
     if not isinstance(review, dict):
         raise ValueError("Reviewer JSON 必须是 object")
 
+    # 台账快照：重跑 Reviewer 时从这里回滚，避免同一轮的问题被重复登记
+    issues_before_path = rounds / f"r{r:03d}.issues_before.json"
+    write_json(issues_before_path, load_issues(job_dir))
+
     (rounds / f"r{r:03d}.reviewer.json").write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
     scores = review.get("scores", {})
     score = int(scores.get("requirement_fit", 0) or 0)
@@ -719,17 +1035,34 @@ def save_review_and_judge(job_dir: Path, reviewer_payload: str) -> dict[str, Any
     verdict = review.get("verdict", "")
     runner_failures = int(status.get("runner_failures", 0) or 0)
 
+    # 更新问题闭环台账：闭环旧问题、登记新问题（含证据机器核验）
+    ledger_summary = register_review_round(job_dir, r, review, file_text(work_file))
+    open_p0 = ledger_summary["open_p0"]
+    open_p1 = ledger_summary["open_p1"]
+
     threshold = int(status.get("threshold", 85))
     max_rounds = int(status.get("max_rounds", 5))
     trend = list(status.get("scores_trend", []))
     trend.append(score)
 
-    if score >= threshold and p0 == 0 and p1 == 0 and runner_failures == 0 and verdict in {"accept", "accept_with_minors"}:
+    # 僵局检测：评分不升、阻断问题（台账 open P0+P1）不减 → 连续 2 轮就提前升级，不空烧轮数
+    blockers = open_p0 + open_p1
+    blockers_trend = list(status.get("blockers_trend", []))
+    prev_blockers = blockers_trend[-1] if blockers_trend else None
+    blockers_trend.append(blockers)
+    improved = (len(trend) < 2 or trend[-1] > trend[-2]) or (prev_blockers is None or blockers < prev_blockers)
+    stall_rounds = 0 if improved else int(status.get("stall_rounds", 0)) + 1
+
+    # Judge 只认台账闭环：Reviewer 当轮报 0 条不算数，台账里的 open P0/P1 必须清零
+    if score >= threshold and open_p0 == 0 and open_p1 == 0 and runner_failures == 0 and verdict in {"accept", "accept_with_minors"}:
         decision = "stop"
-        reason = "达到验收阈值，且 P0/P1 清零"
+        reason = "达到验收阈值，问题台账 P0/P1 全部闭环"
     elif r >= max_rounds:
         decision = "escalate"
         reason = "达到最大轮数，交给人判断"
+    elif stall_rounds >= 2:
+        decision = "escalate"
+        reason = f"连续 {stall_rounds} 轮评分未升、阻断问题未减（僵局），提前交给人判断"
     else:
         decision = "continue"
         reason = "未达到验收条件，进入下一轮"
@@ -742,17 +1075,27 @@ def save_review_and_judge(job_dir: Path, reviewer_payload: str) -> dict[str, Any
         "score": score,
         "p0": p0,
         "p1": p1,
+        "open_p0": open_p0,
+        "open_p1": open_p1,
+        "resolved_this_round": ledger_summary["resolved"],
+        "withdrawn_this_round": ledger_summary["withdrawn"],
+        "new_issues": len(ledger_summary["new_ids"]),
+        "unverified_new_p0p1": ledger_summary["unverified_new_p0p1"],
+        "stall_rounds": stall_rounds,
         "runner_failures": runner_failures,
-        "next_round_hint": "" if decision == "stop" else "优先解决 Reviewer 的 P0/P1，并保持改动范围不扩大。",
+        "next_round_hint": "" if decision == "stop" else "逐条闭环台账里的 open P0/P1（修复或反驳），保持改动范围不扩大。",
     }
     (rounds / f"r{r:03d}.judge.json").write_text(json.dumps(judge, ensure_ascii=False, indent=2), encoding="utf-8")
-    append_ledger(job_dir, "judge_decision", round=r, decision=decision, score=score, p0=p0, p1=p1)
+    append_ledger(job_dir, "judge_decision", round=r, decision=decision, score=score,
+                  p0=p0, p1=p1, open_p0=open_p0, open_p1=open_p1, stall_rounds=stall_rounds)
 
     if decision == "stop":
-        update_status(job_dir, state="READY_FOR_HUMAN_MERGE", scores_trend=trend)
+        update_status(job_dir, state="READY_FOR_HUMAN_MERGE", scores_trend=trend,
+                      blockers_trend=blockers_trend, stall_rounds=stall_rounds)
         finalize(job_dir, "stop")
     elif decision == "escalate":
-        update_status(job_dir, state="ESCALATED", scores_trend=trend)
+        update_status(job_dir, state="ESCALATED", scores_trend=trend,
+                      blockers_trend=blockers_trend, stall_rounds=stall_rounds)
         finalize(job_dir, "escalate")
     else:
         # 进入下一轮前，把当前 worktree 作为新一轮的"本轮 Builder 开始前"基线
@@ -762,7 +1105,8 @@ def save_review_and_judge(job_dir: Path, reviewer_payload: str) -> dict[str, Any
             shutil.copy2(work_file, baseline)
         except OSError:
             pass
-        update_status(job_dir, state="WAIT_BUILDER", round=next_r, scores_trend=trend)
+        update_status(job_dir, state="WAIT_BUILDER", round=next_r, scores_trend=trend,
+                      blockers_trend=blockers_trend, stall_rounds=stall_rounds)
         build_builder_prompt(job_dir)
 
     return {"judge": judge, "job": job_summary(job_dir)}
@@ -780,6 +1124,18 @@ def finalize(job_dir: Path, reason: str) -> None:
         review = file_text(p)
         if review:
             break
+
+    # 问题闭环账目：开了多少、闭环多少、还开着什么
+    issues = load_issues(job_dir)
+    n_resolved = sum(1 for i in issues if i.get("status") == "resolved")
+    n_withdrawn = sum(1 for i in issues if i.get("status") == "withdrawn")
+    still_open = open_issue_list(issues)
+    open_lines = "\n".join(
+        f"- [{i['id']}] ({i['severity'].upper()}{'·必须修' if i.get('status') == 'must_fix' else ''}"
+        f"{'' if i.get('evidence_verified') else '·无证据'}) {i.get('desc', '')}"
+        for i in still_open
+    ) or "- (无，全部闭环)"
+
     report = f"""# FINAL REVIEW
 
 - job: `{job_dir.name}`
@@ -789,6 +1145,14 @@ def finalize(job_dir: Path, reason: str) -> None:
 - exit_reason: {reason}
 - round: {status.get("round")} / {status.get("max_rounds")}
 - scores_trend: {trend}
+
+## Issue Closed Loop / 问题闭环账目
+
+- 共提出 {len(issues)} 条 · 已修复 {n_resolved} · 反驳成立撤回 {n_withdrawn} · 仍开放 {len(still_open)}
+
+仍开放的问题：
+
+{open_lines}
 
 ## Last Reviewer JSON
 
@@ -940,11 +1304,29 @@ def collect_rounds(job_dir: Path) -> list[dict[str, Any]]:
             for k in ("p0", "p1", "p2"):
                 v = issues.get(k, [])
                 if isinstance(v, list):
-                    item[f"{k}_items"] = [str(x)[:200] for x in v[:6]]
+                    item[f"{k}_items"] = [normalize_issue_item(x)["desc"][:200] for x in v[:6]]
+            res = rv.get("issue_resolutions", [])
+            if isinstance(res, list):
+                item["resolutions"] = [
+                    {"id": str(x.get("id", "")), "status": str(x.get("status", "")),
+                     "note": str(x.get("note", "") or "")[:160]}
+                    for x in res[:12] if isinstance(x, dict)
+                ]
+        bj = read_json(rounds_dir / f"r{n:03d}.builder.json", None)
+        if isinstance(bj, dict):
+            item["changes_summary"] = str(bj.get("changes_summary", "") or "")[:200]
+            disputes = bj.get("disputes", [])
+            if isinstance(disputes, list):
+                item["disputes"] = [
+                    {"id": str(x.get("id", "")), "reason": str(x.get("reason", "") or "")[:160]}
+                    for x in disputes[:8] if isinstance(x, dict)
+                ]
         jd = read_json(rounds_dir / f"r{n:03d}.judge.json", None)
         if isinstance(jd, dict):
             item["decision"] = jd.get("decision", "")
             item["reason"] = jd.get("reason", "")
+            item["open_p0"] = jd.get("open_p0")
+            item["open_p1"] = jd.get("open_p1")
         # 耗时 + 成本
         d = durations.get(n, {})
         item["builder_sec"] = d.get("builder_sec", 0)
@@ -987,6 +1369,14 @@ def retry_reviewer(job_dir: Path) -> dict[str, Any]:
             bak = rounds / f"{name}.retry-{ts}.bak"
             shutil.copy2(p, bak)
             backed.append(bak.name)
+    # 回滚问题台账到本轮 Reviewer 评审前的快照，避免重跑时重复登记/重复闭环
+    issues_before = rounds / f"r{r:03d}.issues_before.json"
+    if issues_before.exists():
+        bak = job_dir / f"ISSUES.json.retry-{ts}.bak"
+        if (job_dir / "ISSUES.json").exists():
+            shutil.copy2(job_dir / "ISSUES.json", bak)
+            backed.append(bak.name)
+        shutil.copy2(issues_before, job_dir / "ISSUES.json")
     # 终态：备份 FINAL_*
     if state in {"READY_FOR_HUMAN_MERGE", "ESCALATED"}:
         for name in ["FINAL.md", "FINAL.diff", "FINAL_REVIEW.md"]:
@@ -1245,6 +1635,7 @@ def run_reviewer_cli(job_dir: Path) -> str:
     review.setdefault("round", r)
     review.setdefault("actor", "reviewer")
     review.setdefault("issues", {"p0": [], "p1": [], "p2": []})
+    review.setdefault("issue_resolutions", [])
     review.setdefault("scores", {"requirement_fit": 0, "correctness": 0, "clarity": 0, "risk": 100})
     review.setdefault("verdict", "needs_revision")
     review.setdefault("summary", "")
@@ -1273,13 +1664,20 @@ def auto_run_job(job_dir: Path, builder_model: str = DEFAULT_BUILDER_MODEL) -> N
                 break
             else:
                 raise RuntimeError(f"未知状态，无法自动运行：{state}")
-        append_ledger(job_dir, "auto_run_finished", state=read_json(job_dir / "STATUS.json", {}).get("state"))
+        final_state = read_json(job_dir / "STATUS.json", {}).get("state")
+        append_ledger(job_dir, "auto_run_finished", state=final_state)
         update_status(job_dir, auto_running=False, auto_phase="idle")
+        target = read_json(job_dir / "STATUS.json", {}).get("target_name", job_id)
+        if final_state == "READY_FOR_HUMAN_MERGE":
+            notify_user("Y1 互搏完成 ✓ 待你合并", f"{target} 已达标，去页面看 FINAL_REVIEW 决定是否合并")
+        elif final_state == "ESCALATED":
+            notify_user("Y1 互搏升级 ⚠ 需要你判断", f"{target} 未收敛（超轮数或僵局），去页面看剩余问题")
     except Exception as exc:
         tb = traceback.format_exc()
         (job_dir / "AUTO_ERROR.log").write_text(tb, encoding="utf-8")
         append_ledger(job_dir, "auto_run_error", error=str(exc))
         update_status(job_dir, auto_running=False, auto_phase="error", auto_error=str(exc))
+        notify_user("Y1 互搏中断 ✗", str(exc)[:160])
     finally:
         AUTO_THREADS.pop(job_id, None)
 
@@ -1564,6 +1962,46 @@ textarea{min-height:64px;resize:vertical}
 .pill.p2{background:var(--accent-bg);color:var(--accent);border-color:#cdd9eb}
 .pill.zero{opacity:.35}
 
+/* —— 闭环流程图：左右互搏工作流的可视化主线 —— */
+.loop-flow{border:1px solid var(--rule);background:var(--paper-2);padding:14px 16px 10px;margin:0 0 20px}
+.lf-track{display:flex;align-items:stretch;overflow-x:auto;padding-bottom:2px}
+.lf-node{flex:1;min-width:92px;text-align:center;padding:8px 6px;border:1px solid var(--rule);background:#fff;position:relative}
+.lf-node+.lf-node{margin-left:24px}
+.lf-node+.lf-node::before{content:"→";position:absolute;left:-19px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px}
+.lf-node .t{font-size:12px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+.lf-node .s{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4}
+.lf-node.done{border-color:#bcd9c3;background:var(--pass-bg)}
+.lf-node.done .t{color:var(--pass)}
+.lf-node.active{border-color:var(--accent);background:var(--accent-bg);box-shadow:0 0 0 1px var(--accent)}
+.lf-node.active .t{color:var(--accent)}
+.lf-node.warn-active{border-color:var(--warn);background:var(--warn-bg);box-shadow:0 0 0 1px var(--warn)}
+.lf-node.warn-active .t{color:var(--warn)}
+.lf-node.dim{opacity:.45}
+.lf-return{margin-top:10px;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);font-family:var(--mono)}
+.lf-return .line{flex:1;border-top:1px dashed #b9c6da;position:relative}
+.lf-return .line::before{content:"◂";position:absolute;left:-2px;top:-8px;color:#8ba3c7}
+.lf-return b{color:var(--accent);font-weight:600}
+
+/* —— 问题闭环台账 —— */
+.issue-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.issue-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--rule)}
+.issue-table td{padding:7px 8px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+.issue-table tr.closed td{opacity:.55}
+.issue-table .iid{font-family:var(--mono);font-size:11px;color:var(--ink-2);white-space:nowrap}
+.issue-table .ev{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.issue-table .rr{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.ist{display:inline-block;padding:1px 7px;font-size:10px;font-family:var(--mono);border:1px solid transparent;white-space:nowrap}
+.ist.open{background:var(--warn-bg);color:var(--warn);border-color:#e5c79a}
+.ist.must_fix{background:var(--fail-bg);color:var(--fail);border-color:#f5b5b5}
+.ist.resolved{background:var(--pass-bg);color:var(--pass);border-color:#bcd9c3}
+.ist.withdrawn{background:var(--rule-2);color:var(--muted);border-color:var(--rule)}
+.mini-h{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:600;margin:10px 0 4px}
+.round-row .issues li.dispute .tag{background:#efe6fa;color:#6b3fa0;border-color:#d4bfef;width:auto;padding:1px 5px}
+.round-row .issues li.res-resolved .tag,.round-row .issues li.res-withdrawn .tag,.round-row .issues li.res-persisting .tag{width:auto;padding:1px 5px}
+.round-row .issues li.res-resolved .tag{background:var(--pass-bg);color:var(--pass);border-color:#bcd9c3}
+.round-row .issues li.res-withdrawn .tag{background:var(--rule-2);color:var(--muted)}
+.round-row .issues li.res-persisting .tag{background:var(--warn-bg);color:var(--warn);border-color:#e5c79a}
+
 .tabs{display:flex;gap:0;margin-bottom:0;border-bottom:1px solid var(--rule);overflow-x:auto}
 .tabs button{background:transparent;color:var(--muted);border:none;padding:8px 14px;font:inherit;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;border-radius:0;white-space:nowrap}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--ink)}
@@ -1597,10 +2035,22 @@ footer{text-align:center;color:var(--muted);font-size:11px;padding:18px 0;font-f
   <div>
     <section class="panel">
       <h2>创建任务</h2>
-      <label>文件路径（工作区内）</label>
-      <div style="display:flex;gap:6px">
-        <input id="source" placeholder="点右侧浏览，或粘绝对路径" style="flex:1">
-        <button class="btn secondary" onclick="openBrowser()" type="button" title="打开文件浏览器">浏览…</button>
+      <div class="view-toggle" style="margin-bottom:4px">
+        <button id="cm-file" class="on" onclick="setCreateMode('file')" type="button">选文件</button>
+        <button id="cm-paste" onclick="setCreateMode('paste')" type="button">贴文本</button>
+      </div>
+      <div id="createFileMode">
+        <label>文件路径（工作区内）</label>
+        <div style="display:flex;gap:6px">
+          <input id="source" placeholder="点右侧浏览，或粘绝对路径" style="flex:1">
+          <button class="btn secondary" onclick="openBrowser()" type="button" title="打开文件浏览器">浏览…</button>
+        </div>
+      </div>
+      <div id="createPasteMode" style="display:none">
+        <label>标题（用于生成文件名）</label>
+        <input id="pasteTitle" placeholder="例如：Q3 业务汇报">
+        <label>粘贴全文</label>
+        <textarea id="pasteContent" style="min-height:150px" placeholder="把要互搏的全文直接贴进来；开始后会自动存到工作区 sparring-inbox/ 下"></textarea>
       </div>
       <label>一句话目标</label>
       <div class="tpl-row">
@@ -1673,12 +2123,12 @@ footer{text-align:center;color:var(--muted);font-size:11px;padding:18px 0;font-f
   <section class="panel" id="detail" style="min-height:60vh">
     <div class="empty">
       <div class="big">选择左侧任务，或新建一个开始</div>
-      <div>创建后会自动生成 Builder 指令；你贴给 Claude，让它在隔离副本里改。</div>
+      <div>闭环工作流：Builder 修改隔离副本 → Runner 体检 → Reviewer 引证审查 → Judge 闭环判定 → 未达标回炉重来。<br>每个问题必须被修复或被反驳成立后撤回，台账 P0/P1 清零才轮到你决定合并。</div>
     </div>
   </section>
 </main>
 
-<footer id="footer-info">v1.0 · 本地控制中台</footer>
+<footer id="footer-info">v1.1 · 本地控制中台 · 闭环互搏</footer>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1782,13 +2232,31 @@ async function loadJobs(){
   }catch(e){/* ignore poll error */}
 }
 
+/* —— 创建模式：选文件 / 贴文本 —— */
+let createMode = 'file';
+function setCreateMode(m){
+  createMode = m;
+  $('#cm-file').classList.toggle('on', m==='file');
+  $('#cm-paste').classList.toggle('on', m==='paste');
+  $('#createFileMode').style.display = m==='file' ? '' : 'none';
+  $('#createPasteMode').style.display = m==='paste' ? '' : 'none';
+}
+function createPayloadBase(){
+  const p = {goal: goal.value};
+  if(createMode==='paste'){
+    p.content = ($('#pasteContent')||{}).value || '';
+    p.title = ($('#pasteTitle')||{}).value || '';
+  } else {
+    p.source_path = source.value;
+  }
+  return p;
+}
+
 /* —— 预检 + 创建：startCreate → preflight 弹窗 → confirmCreate —— */
 async function startCreate(){
   $('#createError').textContent='';
   try{
-    const pre = await api('/api/preflight', {method:'POST', body:JSON.stringify({
-      source_path: source.value, goal: goal.value
-    })});
+    const pre = await api('/api/preflight', {method:'POST', body:JSON.stringify(createPayloadBase())});
     renderPreflight(pre);
     $('#preflightMask').classList.add('open');
   }catch(e){ $('#createError').textContent=e.message }
@@ -1823,7 +2291,7 @@ function closePreflight(){ $('#preflightMask').classList.remove('open') }
 async function confirmCreate(){
   closePreflight();
   try{
-    const payload={source_path:source.value, goal:goal.value, max_rounds:maxRounds.value, threshold:threshold.value, auto_run:autoRun.checked, builder_model:(document.getElementById('builderModel')||{}).value||'sonnet'};
+    const payload={...createPayloadBase(), max_rounds:maxRounds.value, threshold:threshold.value, auto_run:autoRun.checked, builder_model:(document.getElementById('builderModel')||{}).value||'sonnet'};
     const j=await api('/api/jobs',{method:'POST',body:JSON.stringify(payload)});
     current=j.job_id; openRounds.clear();
     await loadJobs(); await selectJob(current);
@@ -1903,6 +2371,7 @@ function applyTpl(name){
 }
 
 function fillSample(){
+  setCreateMode('file');
   source.value=(healthData && healthData.sample_path) || 'examples/demo_proposal_zh.md';
   goal.value='改得更适合给省厅领导汇报，结论前置，删除防御性表达，保留核心业务模块';
 }
@@ -1914,15 +2383,97 @@ async function selectJob(id){
   renderDetail();
 }
 
+/* —— 闭环流程图：把左右互搏的工作流画成一条带回环的主线 —— */
+function renderLoopFlow(j){
+  const nodes=[
+    {t:'快照冻结', s:'原文只读'},
+    {t:'Builder', s:'修复 / 反驳'},
+    {t:'Runner', s:'规则体检'},
+    {t:'Reviewer', s:'引证审查 · 仲裁'},
+    {t:'Judge', s:'闭环判定'},
+    {t:'人工决策', s:'合并 / 放弃'},
+  ];
+  const st=j.state;
+  let activeIdx=-1, doneUpto=0, humanCls='active';
+  if(st==='WAIT_BUILDER'){activeIdx=1;doneUpto=1}
+  else if(st==='WAIT_REVIEWER'){activeIdx=(j.auto_phase||'').startsWith('reviewer')?3:2;doneUpto=activeIdx}
+  else if(st==='READY_FOR_HUMAN_MERGE'){activeIdx=5;doneUpto=5}
+  else if(st==='ESCALATED'){activeIdx=5;doneUpto=5;humanCls='warn-active'}
+  else if(st==='MERGED'){activeIdx=-1;doneUpto=6}
+  const aborted = st==='ABORTED';
+  const html=nodes.map((n,i)=>{
+    let cls='';
+    if(aborted) cls='dim';
+    else if(i===activeIdx) cls=(i===5?humanCls:'active');
+    else if(i<doneUpto) cls='done';
+    return `<div class="lf-node ${cls}"><div class="t">${esc(n.t)}</div><div class="s">${esc(n.s)}</div></div>`;
+  }).join('');
+  const loopLabel = aborted
+    ? '已放弃 · 循环终止'
+    : (st==='MERGED'
+      ? '已合并 · 闭环完成'
+      : `↺ 未达标回到 Builder　·　Round <b>${esc(j.round)}</b>/${esc(j.max_rounds)}　·　验收 ≥${esc(j.threshold||85)} 且台账 P0/P1 清零`);
+  return `<div class="loop-flow">
+    <div class="lf-track">${html}</div>
+    <div class="lf-return"><span class="line"></span><span>${loopLabel}</span></div>
+  </div>`;
+}
+
+/* —— 问题闭环台账：每个问题从提出到闭环的全生命周期 —— */
+function renderIssueLedger(issues){
+  if(!issues || !issues.length) return '';
+  const OPEN=['open','must_fix'];
+  const sevRank={p0:0,p1:1,p2:2};
+  const sorted=[...issues].sort((a,b)=>{
+    const ao=OPEN.includes(a.status)?0:1, bo=OPEN.includes(b.status)?0:1;
+    if(ao!==bo) return ao-bo;
+    if((sevRank[a.severity]??3)!==(sevRank[b.severity]??3)) return (sevRank[a.severity]??3)-(sevRank[b.severity]??3);
+    return (a.opened_round||0)-(b.opened_round||0);
+  });
+  const stLabel={open:'开放中',must_fix:'必须修',resolved:'已闭环',withdrawn:'已撤回'};
+  const nOpen=issues.filter(i=>OPEN.includes(i.status)).length;
+  const nClosed=issues.length-nOpen;
+  const rows=sorted.map(i=>{
+    const closed=!OPEN.includes(i.status);
+    const ev = i.evidence
+      ? `<div class="ev" title="${esc(i.evidence)}">“${esc(i.evidence.slice(0,160))}”${i.evidence_verified?'':' <span style="color:var(--warn)">⚠ 引用未在文中找到</span>'}</div>`
+      : `<div class="ev" style="color:var(--warn)">⚠ 无证据引用</div>`;
+    const dispute = i.dispute_reason ? `<div class="ev" style="color:#6b3fa0">Builder 反驳：${esc(i.dispute_reason.slice(0,120))}</div>` : '';
+    const note = i.close_note ? `<div class="ev">${esc(i.close_note.slice(0,120))}</div>` : '';
+    const rr = `R${i.opened_round||'?'} → ${closed?('R'+(i.closed_round||'?')):'…'}`;
+    return `<tr class="${closed?'closed':''}">
+      <td class="iid">${esc(i.id||'')}</td>
+      <td><span class="pill ${esc(i.severity||'p2')}">${esc((i.severity||'').toUpperCase())}</span></td>
+      <td>${esc(i.desc||'')}${ev}${dispute}${note}</td>
+      <td><span class="ist ${esc(i.status||'open')}">${esc(stLabel[i.status]||i.status||'')}</span></td>
+      <td class="rr">${rr}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="section">
+    <h3>问题闭环台账 · 开放 ${nOpen} · 已闭环 ${nClosed}</h3>
+    <div style="overflow-x:auto"><table class="issue-table">
+      <tr><th>ID</th><th>级</th><th>问题 / 证据 / 反驳</th><th>状态</th><th>轮次</th></tr>
+      ${rows}
+    </table></div>
+    <div class="hint" style="margin-top:6px">闭环规则：每条问题必须被 <b>修复</b> 或被 <b>反驳成立后撤回</b>；Builder 反驳、Reviewer 坚持 2 次后升级为"必须修"。Judge 只在台账 P0/P1 全部闭环后才放行。</div>
+  </div>`;
+}
+
 /* —— Next-action 横幅：state 决定下一步该看到什么 —— */
 /* —— 决策卡：终态时给最强视觉重心 —— */
-function renderVerdictCard(j, rounds){
+function renderVerdictCard(j, rounds, issues){
   const isTerminal = ['READY_FOR_HUMAN_MERGE','ESCALATED'].includes(j.state);
   if(!isTerminal) return '';
   const last = (rounds||[]).slice(-1)[0] || {};
   const score = (last.scores||{}).requirement_fit;
   const threshold = j.threshold || 85;
-  const p0 = last.p0||0, p1 = last.p1||0, p2 = last.p2||0;
+  // 风险口径 = 问题闭环台账（open/must_fix），不是 Reviewer 当轮报数；老 job 没台账时回退旧口径
+  const OPEN=['open','must_fix'];
+  const ledger=(issues||[]).filter(i=>OPEN.includes(i.status));
+  const hasLedger=(issues||[]).length>0;
+  const p0 = hasLedger ? ledger.filter(i=>i.severity==='p0').length : (last.p0||0);
+  const p1 = hasLedger ? ledger.filter(i=>i.severity==='p1').length : (last.p1||0);
+  const p2 = hasLedger ? ledger.filter(i=>i.severity==='p2').length : (last.p2||0);
   const verdict = last.verdict || '';
   const summary = last.summary || '';
   // 综合判断：可合并 / 建议再跑 / 不建议合并
@@ -1938,7 +2489,7 @@ function renderVerdictCard(j, rounds){
   } else if(p1 > 0){
     cls = 'caution';
     title = '⚠ 建议再跑一轮';
-    sub = `${p1} 个 P1 必修项未清零；可点"重跑 Reviewer"或直接合并`;
+    sub = `台账仍有 ${p1} 个 P1 未闭环；可点"重跑 Reviewer"或自行权衡后合并`;
   } else {
     cls = 'caution';
     title = '⚠ 由你最终决定';
@@ -1967,6 +2518,8 @@ function renderVerdictCard(j, rounds){
       <button class="btn" onclick="showCompareView()">看改稿对照</button>
       <button class="btn" onclick="showFile('FINAL.diff')">看完整 diff</button>
       <button class="btn btn-merge" onclick="mergeJob()">合并到原文件</button>
+      <button class="btn secondary" onclick="copyFinalDoc()">复制最终稿</button>
+      <button class="btn secondary" onclick="exportFinal()">另存副本</button>
       <button class="btn btn-reject" onclick="abortJob()">放弃</button>
     </div>
   </div>`;
@@ -2044,6 +2597,8 @@ function renderNextAction(j){
         primary:null,
         secondary:[
           {label:'看 FINAL.diff',fn:`showFile('FINAL.diff')`},
+          {label:'复制最终稿',fn:'copyFinalDoc()'},
+          {label:'另存副本',fn:'exportFinal()'},
         ]};
     case 'ABORTED':
       return {tone:'terminal',label:'已放弃',
@@ -2107,6 +2662,9 @@ function renderRoundTimeline(rounds){
     (r.p0_items||[]).forEach(s=>items.push(`<li class="p0"><span class="tag">P0</span>${esc(s)}</li>`));
     (r.p1_items||[]).forEach(s=>items.push(`<li class="p1"><span class="tag">P1</span>${esc(s)}</li>`));
     (r.p2_items||[]).forEach(s=>items.push(`<li class="p2"><span class="tag">P2</span>${esc(s)}</li>`));
+    const disputes=(r.disputes||[]).map(d=>`<li class="dispute"><span class="tag">反驳</span>[${esc(d.id)}] ${esc(d.reason)}</li>`);
+    const resLabel={resolved:'✓ 已修复',withdrawn:'↩ 撤回',persisting:'✗ 仍在'};
+    const resols=(r.resolutions||[]).map(x=>`<li class="res-${esc(x.status)}"><span class="tag">${resLabel[x.status]||esc(x.status)}</span>[${esc(x.id)}] ${esc(x.note||'')}</li>`);
     return `<div class="round-row ${open?'open':''}" onclick="toggleRound(${r.round})">
       <div class="head">
         <div class="head-left">
@@ -2120,6 +2678,7 @@ function renderRoundTimeline(rounds){
           ${verdict?`<span class="verdict ${esc(verdict)}">${esc(verdict)}</span>`:''}
         </div>
         <div class="right ${dec==='stop'?'stop':(dec==='escalate'?'escalate':'')}">
+          ${r.open_p0!=null?`<span style="opacity:.7;margin-right:8px">台账开放 P0 ${r.open_p0}·P1 ${r.open_p1}</span>`:''}
           ${r.total_label?`<span style="opacity:.7;margin-right:8px">${esc(r.total_label)}</span>`:''}
           ${r.cost_cny?`<span style="opacity:.7;margin-right:8px">¥${r.cost_cny.toFixed(1)}</span>`:''}
           ${esc(dec||'')}
@@ -2128,7 +2687,10 @@ function renderRoundTimeline(rounds){
       ${r.summary && !open ? `<div class="summary-collapsed">${esc(r.summary)}</div>` : ''}
       <div class="body">
         ${r.summary?`<div class="summary">${esc(r.summary)}</div>`:''}
-        ${items.length?`<ul class="issues">${items.join('')}</ul>`:'<div class="hint">(无具体问题)</div>'}
+        ${r.changes_summary?`<div class="mini-h">Builder 本轮</div><div style="font-size:12px;color:var(--ink-2)">${esc(r.changes_summary)}</div>`:''}
+        ${disputes.length?`<div class="mini-h">Builder 反驳（待 Reviewer 仲裁）</div><ul class="issues">${disputes.join('')}</ul>`:''}
+        ${resols.length?`<div class="mini-h">Reviewer 闭环裁定</div><ul class="issues">${resols.join('')}</ul>`:''}
+        ${items.length?`<div class="mini-h">新提出的问题</div><ul class="issues">${items.join('')}</ul>`:'<div class="hint">(本轮无新问题)</div>'}
         <div style="margin-top:10px;display:flex;gap:6px">
           <button class="btn ghost sm" onclick="event.stopPropagation();retryReviewer(${r.round})" title="把当前 Reviewer 评分丢掉重跑一次（备份旧的）">重跑 Reviewer</button>
         </div>
@@ -2166,7 +2728,7 @@ function renderDetail(){
        </div>`
     : '';
   const isTerminal = ['READY_FOR_HUMAN_MERGE','ESCALATED'].includes(j.state);
-  const verdictCard = renderVerdictCard(j, currentData.rounds||[]);
+  const verdictCard = renderVerdictCard(j, currentData.rounds||[], currentData.issues||[]);
   // 终态下 next-action 块降级为弱辅助；非终态保持原来的位置
   const nextActionBlock = isTerminal ? '' : `
     <div class="next-action ${next.tone||''}">
@@ -2184,6 +2746,7 @@ function renderDetail(){
         <div class="detail-meta" style="margin-top:4px"><b>目标</b> ${goal}</div>
       </div>
     </div>
+    ${renderLoopFlow(j)}
     ${errBanner}
     ${verdictCard}
     ${nextActionBlock}
@@ -2194,6 +2757,8 @@ function renderDetail(){
       <h3>评分轨迹 · 阈值 ${threshold}</h3>
       ${renderScoreChart(trend, threshold)}
     </div>
+
+    ${renderIssueLedger(currentData.issues||[])}
 
     <div class="section">
       <h3>轮次明细 · ${(currentData.rounds||[]).length} 轮已完成</h3>
@@ -2402,6 +2967,19 @@ async function saveReview(){
   }catch(e){$('#detailError') && ($('#detailError').textContent=e.message); toast('保存失败：'+e.message)}
 }
 
+async function copyFinalDoc(){
+  const j=currentData && currentData.status; if(!j) return;
+  const name=j.has_final ? 'FINAL.md' : ('worktree/'+(j.target_name||''));
+  await copyFile(name, '最终稿已复制到剪贴板');
+}
+
+async function exportFinal(){
+  try{
+    const r=await api('/api/jobs/'+current+'/export',{method:'POST',body:'{}'});
+    toast('已另存副本：'+(r.dest||'').split('/').pop(), 3500);
+  }catch(e){toast('导出失败：'+e.message)}
+}
+
 async function mergeJob(){
   if(!confirm('确认把 FINAL 覆盖回原文件？系统会在 job 目录留 ORIGINAL_BEFORE_MERGE 备份。')) return;
   try{await api('/api/jobs/'+current+'/merge',{method:'POST',body:'{}'}); toast('已合并'); await selectJob(current)}
@@ -2481,6 +3059,7 @@ class Handler(BaseHTTPRequestHandler):
                     "job_dir": str(job_dir),
                     "preview": file_text(job_dir / "TASK.md"),
                     "rounds": collect_rounds(job_dir),
+                    "issues": load_issues(job_dir),
                 })
             else:
                 self.send_json({"error": "not found"}, 404)
@@ -2505,12 +3084,18 @@ class Handler(BaseHTTPRequestHandler):
             path = parsed.path.rstrip("/")
             body = self.read_body()
             if path == "/api/preflight":
-                self.send_json(preflight_check(body.get("source_path", ""), body.get("goal", "")))
+                self.send_json(preflight_check(
+                    body.get("source_path", ""), body.get("goal", ""),
+                    content=body.get("content", ""), title=body.get("title", ""),
+                ))
                 return
             if path == "/api/jobs":
                 builder_model = body.get("builder_model") or DEFAULT_BUILDER_MODEL
+                source_path = body.get("source_path", "")
+                if (body.get("content") or "").strip():
+                    source_path = str(materialize_pasted_content(body.get("title", ""), body["content"]))
                 job = create_job(
-                    body.get("source_path", ""),
+                    source_path,
                     body.get("goal", ""),
                     body.get("max_rounds", 5),
                     body.get("threshold", 85),
@@ -2539,6 +3124,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/jobs/") and path.endswith("/retry-reviewer"):
                 job_id = path.split("/")[3]
                 self.send_json(retry_reviewer(job_dir_for(job_id)))
+            elif path.startswith("/api/jobs/") and path.endswith("/export"):
+                job_id = path.split("/")[3]
+                self.send_json(export_final(job_dir_for(job_id)))
             else:
                 self.send_json({"error": "not found"}, 404)
         except Exception as exc:

@@ -58,18 +58,34 @@ Judge returns `stop` only when all conditions pass:
 只有同时满足以下条件，Judge 才会返回 `stop`：
 
 - `requirement_fit >= threshold`
-- `p0 = 0`
-- `p1 = 0`
+- issue ledger has zero open P0 / 问题台账 open P0 = 0
+- issue ledger has zero open P1 / 问题台账 open P1 = 0
 - `runner_failures = 0`
 - reviewer verdict is `accept` or `accept_with_minors`
 
-Judge returns `escalate` when max rounds are reached before stop conditions pass.
+Note the ledger wording: the Reviewer reporting "no new issues this round" is not enough. Every previously raised P0/P1 must be explicitly closed — fixed (`resolved`) or withdrawn after a successful Builder rebuttal (`withdrawn`).
 
-如果达到最大轮数但还没通过停止门槛，Judge 返回 `escalate`。
+注意口径是"台账"：Reviewer 本轮没报新问题并不够，之前提过的每条 P0/P1 都必须被显式闭环 —— 修复（resolved）或反驳成立后撤回（withdrawn）。
+
+Judge returns `escalate` in two cases / 两种情况返回 `escalate`：
+
+- max rounds reached before stop conditions pass / 达到最大轮数仍未达标；
+- stalemate: two consecutive rounds with no score increase and no reduction of open P0/P1 (stops burning rounds early) / 僵局：连续 2 轮评分不升、台账阻断问题不减，提前升级不空烧轮数。
 
 Everything else returns `continue`.
 
 其他情况返回 `continue`。
+
+## Issue Closed Loop / 问题闭环
+
+- Every Reviewer issue gets an ID (`R1-P1-2` = round 1, P1, #2) and must cite verbatim evidence from the current file. The system machine-verifies the quote; unverifiable P0/P1 issues are flagged "no evidence" in the UI.  
+  每条问题都有 ID，且必须附当前文件的原文引用作为证据。系统机器核验引用；核验失败的 P0/P1 会在页面标记"无证据"。
+- The Builder must handle every open issue each round: fix it, or dispute it with a reason in `builder.json` (`disputes`).  
+  Builder 每轮必须处理所有 open 问题：修复，或在 `builder.json` 的 `disputes` 里给出理由反驳。
+- The Reviewer arbitrates each dispute in `issue_resolutions`: `resolved` / `persisting` / `withdrawn`. A dispute upheld by the Reviewer twice turns the issue into `must_fix`, which can no longer be disputed.  
+  Reviewer 在 `issue_resolutions` 里仲裁：修好了、还在、撤回。反驳被驳回 2 次后问题升级为"必须修"，不再可反驳。
+- The full lifecycle lives in `ISSUES.json` and is rendered as the "问题闭环台账" table in the UI.  
+  全生命周期记录在 `ISSUES.json`，页面上就是"问题闭环台账"表格。
 
 ## Job Folder / 任务目录
 
@@ -78,17 +94,19 @@ jobs/<job_id>/
   TASK.md
   STATUS.json
   ledger.jsonl
+  ISSUES.json               # issue closed-loop ledger / 问题闭环台账
   INPUT_SNAPSHOT/<filename>
   worktree/<filename>
   rounds/
     r001.before_builder.<filename>
     r001.builder.prompt.md
-    r001.builder.json
+    r001.builder.json        # includes addressed_issues + disputes / 含修复清单与反驳
     r001.builder.patch
     r001.runner.log
     r001.reviewer.prompt.md
     r001.reviewer.schema.json
-    r001.reviewer.json
+    r001.reviewer.json       # includes issue_resolutions / 含闭环裁定
+    r001.issues_before.json  # ledger snapshot for reviewer retry / 重跑回滚快照
     r001.judge.json
   FINAL.md
   FINAL.diff
@@ -149,9 +167,14 @@ Expected JSON shape / JSON 格式：
   "actor": "reviewer",
   "issues": {
     "p0": [],
-    "p1": [],
+    "p1": [
+      {"desc": "问题描述", "evidence": "当前文件里的原文引用", "location": "大致位置"}
+    ],
     "p2": []
   },
+  "issue_resolutions": [
+    {"id": "R1-P1-1", "status": "resolved", "note": "一句话理由"}
+  ],
   "scores": {
     "requirement_fit": 88,
     "correctness": 90,
@@ -162,6 +185,10 @@ Expected JSON shape / JSON 格式：
   "summary": "The file meets the goal with only minor optional edits."
 }
 ```
+
+Plain-string issues are still accepted for backward compatibility, but they will be flagged "no evidence" in the ledger.
+
+纯字符串问题仍然兼容，但会在台账里标记"无证据"。
 
 ## Runner Checks / Runner 检查
 
