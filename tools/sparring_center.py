@@ -1209,11 +1209,14 @@ def run_reviewer_cli(job_dir: Path) -> str:
     schema_path.write_text(json.dumps(REVIEWER_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8")
     raw_path = rounds / f"r{r:03d}.reviewer.raw"
     codex = command_path("codex", "/Applications/Codex.app/Contents/Resources/codex")
-    append_ledger(job_dir, "auto_reviewer_start", round=r)
+    reviewer_model = (status.get("reviewer_model") or "").strip()
+    append_ledger(job_dir, "auto_reviewer_start", round=r, model=reviewer_model or "(codex default)")
     update_status(job_dir, auto_running=True, auto_phase=f"reviewer_r{r}", auto_error=None)
+    model_args = ["--model", reviewer_model] if reviewer_model else []
     cmd = [
         codex,
         "exec",
+        *model_args,
         "-C",
         str(job_dir),
         "-s",
@@ -1621,6 +1624,16 @@ footer{text-align:center;color:var(--muted);font-size:11px;padding:18px 0;font-f
           </select>
         </div>
       </div>
+      <div><label>Reviewer 模型（Codex）</label>
+        <input id="reviewerModel" list="codexModelList" placeholder="留空 = 跟随本机 Codex 默认"
+          style="width:100%;font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--rule);background:#fff;color:var(--ink);border-radius:0;box-sizing:border-box">
+        <datalist id="codexModelList">
+          <option value="gpt-5-codex"></option>
+          <option value="gpt-5"></option>
+          <option value="gpt-5-mini"></option>
+        </datalist>
+        <div class="hint" style="margin-top:4px">留空就用你本机 Codex 配置里的默认模型；填了才会给 codex 传 --model。模型名要以你本机 <code>codex</code> 实际支持的为准。</div>
+      </div>
       <label class="checkline"><input id="autoRun" type="checkbox" checked> 自动调用本机 Claude / Codex 跑完整轮次</label>
       <div class="actions-row">
         <button class="btn" onclick="startCreate()">开始互搏</button>
@@ -1823,7 +1836,7 @@ function closePreflight(){ $('#preflightMask').classList.remove('open') }
 async function confirmCreate(){
   closePreflight();
   try{
-    const payload={source_path:source.value, goal:goal.value, max_rounds:maxRounds.value, threshold:threshold.value, auto_run:autoRun.checked, builder_model:(document.getElementById('builderModel')||{}).value||'sonnet'};
+    const payload={source_path:source.value, goal:goal.value, max_rounds:maxRounds.value, threshold:threshold.value, auto_run:autoRun.checked, builder_model:(document.getElementById('builderModel')||{}).value||'sonnet', reviewer_model:((document.getElementById('reviewerModel')||{}).value||'').trim()};
     const j=await api('/api/jobs',{method:'POST',body:JSON.stringify(payload)});
     current=j.job_id; openRounds.clear();
     await loadJobs(); await selectJob(current);
@@ -2516,7 +2529,8 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("threshold", 85),
                     bool(body.get("auto_run", False)),
                 )
-                update_status(job_dir_for(job["job_id"]), builder_model=builder_model)
+                reviewer_model = (body.get("reviewer_model") or "").strip()
+                update_status(job_dir_for(job["job_id"]), builder_model=builder_model, reviewer_model=reviewer_model)
                 if body.get("auto_run"):
                     job = start_auto_run(job_dir_for(job["job_id"]), builder_model)
                 self.send_json(job)
