@@ -1,0 +1,522 @@
+<title>Skill Evolution Lab · 控制台</title>
+<style>
+  :root{
+    --bg:#f4f6f5; --panel:#ffffff; --panel-2:#eef1f0; --ink:#1c2422; --ink-2:#5a6663;
+    --line:#dde3e1; --accent:#1f6f66; --accent-ink:#ffffff; --accent-soft:#e2efec;
+    --good:#2e7d43; --good-bg:#e4f2e7; --warn:#9a6b10; --warn-bg:#f7edd6;
+    --bad:#b03434; --bad-bg:#f9e5e3; --info:#3a5f8a; --info-bg:#e5edf6;
+    --mute-bg:#eceeed; --shadow:0 1px 2px rgba(28,36,34,.06),0 4px 14px rgba(28,36,34,.05);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#141a19; --panel:#1c2422; --panel-2:#222b29; --ink:#e6ecea; --ink-2:#94a29e;
+      --line:#2e3a37; --accent:#4fb3a5; --accent-ink:#0d1514; --accent-soft:#1f3733;
+      --good:#6cc584; --good-bg:#1d3324; --warn:#d8a94e; --warn-bg:#3a2f16;
+      --bad:#e08080; --bad-bg:#3d2120; --info:#8ab1dd; --info-bg:#1e2c3c;
+      --mute-bg:#252e2c; --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#141a19; --panel:#1c2422; --panel-2:#222b29; --ink:#e6ecea; --ink-2:#94a29e;
+    --line:#2e3a37; --accent:#4fb3a5; --accent-ink:#0d1514; --accent-soft:#1f3733;
+    --good:#6cc584; --good-bg:#1d3324; --warn:#d8a94e; --warn-bg:#3a2f16;
+    --bad:#e08080; --bad-bg:#3d2120; --info:#8ab1dd; --info-bg:#1e2c3c;
+    --mute-bg:#252e2c; --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f5; --panel:#ffffff; --panel-2:#eef1f0; --ink:#1c2422; --ink-2:#5a6663;
+    --line:#dde3e1; --accent:#1f6f66; --accent-ink:#ffffff; --accent-soft:#e2efec;
+    --good:#2e7d43; --good-bg:#e4f2e7; --warn:#9a6b10; --warn-bg:#f7edd6;
+    --bad:#b03434; --bad-bg:#f9e5e3; --info:#3a5f8a; --info-bg:#e5edf6;
+    --mute-bg:#eceeed; --shadow:0 1px 2px rgba(28,36,34,.06),0 4px 14px rgba(28,36,34,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.65 "PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;}
+  .app{display:flex;min-height:100vh}
+  /* ---------- sidebar ---------- */
+  .side{width:228px;flex:none;border-right:1px solid var(--line);background:var(--panel);
+    padding:20px 14px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow-y:auto}
+  .brand{padding:2px 10px 14px}
+  .brand b{font-size:16px;letter-spacing:.02em}
+  .brand .sub{font-size:12px;color:var(--ink-2);font-family:var(--mono)}
+  .navlab{font-size:11px;letter-spacing:.14em;color:var(--ink-2);text-transform:uppercase;padding:12px 10px 4px}
+  .nav-btn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:none;
+    color:var(--ink);padding:8px 10px;border-radius:8px;font:inherit;font-size:14px;cursor:pointer}
+  .nav-btn:hover{background:var(--panel-2)}
+  .nav-btn[aria-current="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .nav-btn .cmd{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+  .side-foot{margin-top:auto;padding:12px 10px;font-size:12px;color:var(--ink-2);border-top:1px solid var(--line)}
+  /* ---------- main ---------- */
+  .main{flex:1;min-width:0;padding:20px 28px 60px;max-width:1120px}
+  .topbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:20px}
+  .topbar h1{font-size:19px;margin:0;letter-spacing:.01em}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 10px;border-radius:99px;
+    background:var(--mute-bg);color:var(--ink-2);font-family:var(--mono)}
+  .chip.on{background:var(--accent-soft);color:var(--accent)}
+  section{display:none}
+  section.active{display:block}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+  .card h3{margin:0 0 10px;font-size:14px;letter-spacing:.02em}
+  .card h3 .hint{font-weight:400;color:var(--ink-2);font-size:12px;margin-left:6px}
+  .kpi{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+  .kpi small{font-size:13px;font-weight:400;color:var(--ink-2)}
+  .delta-up{color:var(--good);font-size:13px;font-weight:600}
+  .delta-dn{color:var(--bad);font-size:13px;font-weight:600}
+  /* badges */
+  .b{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:6px;white-space:nowrap;font-family:var(--mono)}
+  .b-pass{background:var(--good-bg);color:var(--good)}
+  .b-fail{background:var(--bad-bg);color:var(--bad)}
+  .b-hold,.b-warn{background:var(--warn-bg);color:var(--warn)}
+  .b-info{background:var(--info-bg);color:var(--info)}
+  .b-mute{background:var(--mute-bg);color:var(--ink-2)}
+  .b-acc{background:var(--accent-soft);color:var(--accent)}
+  /* tables */
+  .tblwrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th{font-size:12px;color:var(--ink-2);text-align:left;font-weight:600;letter-spacing:.04em;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  /* meter */
+  .meter{height:8px;border-radius:99px;background:var(--mute-bg);overflow:hidden;margin:6px 0 4px}
+  .meter>i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+  .meter>i.warnfill{background:var(--warn)}
+  .meter-cap{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+  /* pipeline */
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .st{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 12px;font-size:12.5px;font-family:var(--mono);color:var(--ink-2)}
+  .st.done{border-color:var(--good);color:var(--good);background:var(--good-bg)}
+  .st.now{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);font-weight:700;box-shadow:0 0 0 3px var(--accent-soft)}
+  .arrow{color:var(--ink-2);font-size:12px}
+  .branchnote{font-size:12.5px;color:var(--ink-2);margin-top:10px;line-height:1.7}
+  /* issue cards */
+  .issue{border-left:3px solid var(--line);padding:10px 14px;margin:10px 0;background:var(--panel-2);border-radius:0 10px 10px 0}
+  .issue.sev-high{border-left-color:var(--bad)}
+  .issue.sev-mid{border-left-color:var(--warn)}
+  .issue.sev-low{border-left-color:var(--info)}
+  .issue .head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px}
+  .issue .head .id{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+  .issue p{margin:4px 0;font-size:13.5px}
+  .kv{font-size:12.5px;color:var(--ink-2)}
+  .kv b{color:var(--ink);font-weight:600}
+  /* diff */
+  .diff{font-family:var(--mono);font-size:12.5px;line-height:1.7;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;overflow-x:auto;white-space:pre}
+  .diff .del{color:var(--bad);background:var(--bad-bg);display:block}
+  .diff .add{color:var(--good);background:var(--good-bg);display:block}
+  .diff .ctx{color:var(--ink-2);display:block}
+  /* question option */
+  .opt{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:8px 0;background:var(--panel)}
+  .opt .tag{flex:none;width:26px;height:26px;border-radius:8px;background:var(--mute-bg);color:var(--ink-2);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-family:var(--mono);font-size:13px}
+  .opt.rec{border-color:var(--accent)}
+  .opt.rec .tag{background:var(--accent);color:var(--accent-ink)}
+  .opt .body{font-size:13.5px}
+  .opt .impact{font-size:12.5px;color:var(--ink-2)}
+  /* checklist */
+  .ck{list-style:none;margin:0;padding:0}
+  .ck li{display:flex;gap:10px;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13.5px;align-items:baseline}
+  .ck li:last-child{border-bottom:0}
+  .ck .no{flex:none;font-family:var(--mono);font-size:12px;color:var(--ink-2);width:22px;text-align:right}
+  .ck .s{flex:none;width:64px}
+  button.act{border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);border-radius:8px;
+    padding:7px 16px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
+  button.act.ghost{background:none;color:var(--accent)}
+  button.act:focus-visible,.nav-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .note{font-size:12.5px;color:var(--ink-2);line-height:1.7}
+  .callout{border:1px dashed var(--line);border-radius:10px;padding:10px 14px;font-size:13px;color:var(--ink-2);background:var(--panel-2);margin-top:10px}
+  .callout b{color:var(--warn)}
+  h2.sec{font-size:16px;margin:26px 0 12px;letter-spacing:.02em}
+  h2.sec:first-child{margin-top:0}
+  .lockrow td{color:var(--ink-2)}
+  @media (max-width:860px){
+    .app{flex-direction:column}
+    .side{width:100%;height:auto;position:static;flex-direction:row;flex-wrap:wrap;align-items:center}
+    .side-foot,.navlab{display:none}
+    .brand{padding:2px 10px}
+    .main{padding:16px}
+  }
+  @media (prefers-reduced-motion: no-preference){
+    section.active{animation:fade .18s ease-out}
+    @keyframes fade{from{opacity:.4;transform:translateY(3px)}to{opacity:1;transform:none}}
+  }
+</style>
+
+<div class="app">
+  <nav class="side" aria-label="主导航">
+    <div class="brand">
+      <b>Skill Evolution Lab</b>
+      <div class="sub">target: live-review</div>
+    </div>
+    <div class="navlab">工作台</div>
+    <button class="nav-btn" data-tab="overview" aria-current="true">概览</button>
+    <button class="nav-btn" data-tab="pipeline">流程状态机</button>
+    <div class="navlab">证据</div>
+    <button class="nav-btn" data-tab="cases">案例库 <span class="cmd">baseline</span></button>
+    <button class="nav-btn" data-tab="spar">左右互搏 <span class="cmd">spar</span></button>
+    <button class="nav-btn" data-tab="questions">澄清问题 <span class="cmd">questions</span></button>
+    <div class="navlab">演化</div>
+    <button class="nav-btn" data-tab="candidates">候选与评测 <span class="cmd">eval</span></button>
+    <button class="nav-btn" data-tab="acceptance">验收清单 <span class="cmd">report</span></button>
+    <div class="side-foot">
+      L2 自动化 · 生产目录只读<br>
+      晋级永不自动，仅用户显式确认
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <h1 id="page-title">概览</h1>
+      <span class="chip on">运行 #R-0031</span>
+      <span class="chip">2026-07-15 14:02</span>
+      <span class="chip">chatgpt v1.3.0 · claude v1.2.1</span>
+    </div>
+
+    <!-- ================= 概览 ================= -->
+    <section id="tab-overview" class="active">
+      <div class="grid g3">
+        <div class="card">
+          <h3>ChatGPT 基线得分 <span class="hint">第二层加权 / 100</span></h3>
+          <div class="kpi">71.4 <span class="delta-up">候选 +4.7</span></div>
+          <div class="note">chatgpt.skill.md v1.3.0，12 个回归案例</div>
+        </div>
+        <div class="card">
+          <h3>Claude 基线得分 <span class="hint">第二层加权 / 100</span></h3>
+          <div class="kpi">74.9 <span class="delta-dn">候选 −1.2</span></div>
+          <div class="note">claude.skill.md v1.2.1，候选盲审分差 17%，超阈值待人工裁决</div>
+        </div>
+        <div class="card">
+          <h3>待用户处理</h3>
+          <div class="kpi">3 <small>项</small></div>
+          <div class="note">2 个澄清问题 · 1 个候选待晋级裁决</div>
+        </div>
+      </div>
+
+      <h2 class="sec">成本护栏（9.3）</h2>
+      <div class="grid g2">
+        <div class="card">
+          <h3>spar 调用预算 <span class="b b-pass">正常</span></h3>
+          <div class="meter"><i style="width:65%"></i></div>
+          <div class="meter-cap"><span>已用 31 次</span><span>上限 N1 = 48</span></div>
+          <div class="note">重跑上限 3 / 案例 · 两轮交叉反驳已提前停止（无新增高严重度问题）</div>
+        </div>
+        <div class="card">
+          <h3>eval 调用预算 <span class="b b-hold">待确认</span></h3>
+          <div class="meter"><i class="warnfill" style="width:78%"></i></div>
+          <div class="meter-cap"><span>dry-run 预估 75 次 / ¥18.4 / ~26 min</span><span>上限 N2 = 96</span></div>
+          <div class="note">执行前需人工确认预估；超预算即落 HOLD 并报告已花成本，不会静默续跑</div>
+        </div>
+      </div>
+
+      <h2 class="sec">根因分布（本轮 FAIL 案例 · 防肿第一闸门）</h2>
+      <div class="card tblwrap">
+        <table>
+          <thead><tr><th>root_cause</th><th class="num">数量</th><th>去向</th></tr></thead>
+          <tbody>
+            <tr><td><span class="b b-acc">2_skill_defect</span></td><td class="num">3</td><td>假设 / 候选流程（唯一改 Skill 入口）</td></tr>
+            <tr><td><span class="b b-info">1_requirement_unclear</span></td><td class="num">2</td><td>澄清问题队列</td></tr>
+            <tr><td><span class="b b-mute">3_model_variance</span></td><td class="num">1</td><td>仅记录，不改 Skill（重跑 3 次仅 1 次失败）</td></tr>
+            <tr><td><span class="b b-warn">4_tool_failure</span></td><td class="num">1</td><td>环境问题队列</td></tr>
+            <tr><td><span class="b b-mute">5_data_insufficient</span></td><td class="num">1</td><td>案例 / 数据补充队列</td></tr>
+            <tr><td><span class="b b-fail">6_evaluator_error</span></td><td class="num">0</td><td>评测器 issue 队列（仅人工修复）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= 状态机 ================= -->
+    <section id="tab-pipeline">
+      <div class="card">
+        <h3>运行 #R-0031 · 当前处于 BLIND_A_B_REVIEW</h3>
+        <div class="flow">
+          <span class="st done">TRIGGERED</span><span class="arrow">→</span>
+          <span class="st done">INGESTED</span><span class="arrow">→</span>
+          <span class="st done">TASK_VALIDATION</span><span class="arrow">→</span>
+          <span class="st done">BASELINE_RUN</span><span class="arrow">→</span>
+          <span class="st done">INDEPENDENT_DIAGNOSIS</span><span class="arrow">→</span>
+          <span class="st done">CROSS_REVIEW</span><span class="arrow">→</span>
+          <span class="st done">ISSUE_MERGE</span><span class="arrow">→</span>
+          <span class="st done">ROOT_CAUSE_CLASSIFICATION</span><span class="arrow">→</span>
+          <span class="st done">EVIDENCE_RESOLUTION</span><span class="arrow">→</span>
+          <span class="st done">MINIMAL_PATCH_PROPOSAL</span><span class="arrow">→</span>
+          <span class="st done">REGRESSION_EVALUATION</span><span class="arrow">→</span>
+          <span class="st now">BLIND_A_B_REVIEW</span><span class="arrow">→</span>
+          <span class="st">REPORT</span><span class="arrow">→</span>
+          <span class="st">用户裁决晋级</span>
+        </div>
+        <div class="branchnote">
+          分流记录：TASK_VALIDATION 拦下 1 例（C-021 → BLOCKED_BY_AMBIGUITY，未进入评分）；
+          ROOT_CAUSE_CLASSIFICATION 仅放行 3 个 skill_defect issue；
+          EVIDENCE_RESOLUTION 将 ISS-11 送入 TEST_GENERATION（测试 T-3），ISS-09 送入澄清问题队列。
+        </div>
+      </div>
+      <div class="callout">
+        触发方式：本次为手动触发（<span class="mono">skilllab spar live-review</span>）。
+        自动体检条件：用户显式差评 / 生产 Skill 变更 / 新增一批真实案例。
+      </div>
+    </section>
+
+    <!-- ================= 案例库 ================= -->
+    <section id="tab-cases">
+      <div class="grid g3" style="margin-bottom:14px">
+        <div class="card"><h3>诊断案例</h3><div class="kpi">14</div><div class="note">双模型可见，用于发现问题</div></div>
+        <div class="card"><h3>回归 / 对抗</h3><div class="kpi">12 <small>/</small> 5</div><div class="note">回归查退化，对抗测边界与错误路径</div></div>
+        <div class="card"><h3>隐藏案例</h3><div class="kpi">8 <small>🔒</small></div><div class="note">对候选生成模型不可见（验收第 9 条）</div></div>
+      </div>
+      <div class="card tblwrap">
+        <h3>案例明细 <span class="hint">判定先于评分：无效 / 歧义 / 工具故障不进入评分</span></h3>
+        <table>
+          <thead><tr><th>case_id</th><th>类型</th><th>输入摘要</th><th>判定</th><th>root_cause</th><th>业务闭环</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="mono">C-014</td><td>诊断</td>
+              <td>7/2 场直播复盘：GMV 达标但停留时长骤降</td>
+              <td><span class="b b-fail">FAIL</span></td>
+              <td><span class="b b-acc">2_skill_defect</span></td>
+              <td class="note">accepted ✓ · executed: no</td>
+            </tr>
+            <tr>
+              <td class="mono">C-006</td><td>诊断</td>
+              <td>数据导出 CSV 编码损坏，输出乱码</td>
+              <td><span class="b b-warn">TOOL_FAILURE</span></td>
+              <td><span class="b b-warn">4_tool_failure</span></td>
+              <td class="note">—</td>
+            </tr>
+            <tr>
+              <td class="mono">C-017</td><td>诊断</td>
+              <td>常规场次复盘，一次输出漏掉优先级排序</td>
+              <td><span class="b b-fail">FAIL ×1/3</span></td>
+              <td><span class="b b-mute">3_model_variance</span></td>
+              <td class="note">重跑 3 次通过 2 次 → 波动免疫，不生成候选</td>
+            </tr>
+            <tr>
+              <td class="mono">C-021</td><td>对抗</td>
+              <td>「复盘一下」——未指定场次、目标、口径</td>
+              <td><span class="b b-info">BLOCKED_BY_AMBIGUITY</span></td>
+              <td><span class="b b-info">1_requirement_unclear</span></td>
+              <td class="note">未进入评分</td>
+            </tr>
+            <tr>
+              <td class="mono">C-025</td><td>诊断</td>
+              <td>仅有 GMV 单指标，无流量与转化数据</td>
+              <td><span class="b b-mute">INSUFFICIENT_EVIDENCE</span></td>
+              <td><span class="b b-mute">5_data_insufficient</span></td>
+              <td class="note">进数据补充队列</td>
+            </tr>
+            <tr>
+              <td class="mono">C-009</td><td>回归</td>
+              <td>历史高分案例：双主播场次归因</td>
+              <td><span class="b b-pass">PASS</span></td>
+              <td class="note">—</td>
+              <td class="note">accepted ✓ · executed ✓ · causal_confidence 0.6</td>
+            </tr>
+            <tr class="lockrow">
+              <td class="mono">C-03x</td><td>隐藏 🔒</td>
+              <td>（对候选生成模型与本视图均不展示内容）</td>
+              <td><span class="b b-mute">8 例</span></td>
+              <td class="note">—</td>
+              <td class="note">仅评测引擎可读</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        案例 schema 关键字段：<span class="mono">input / production_output / human_feedback / expected_properties /
+        forbidden_behaviors / accepted / executed / execution_quality / business_result / external_factors / causal_confidence</span>
+      </div>
+    </section>
+
+    <!-- ================= 左右互搏 ================= -->
+    <section id="tab-spar">
+      <div class="card">
+        <h3>轮次进度 <span class="hint">独立盲审 → 交叉反驳（≤2 轮）→ 实验设计 · 本轮第 2 轮后提前停止</span></h3>
+        <div class="flow">
+          <span class="st done">R1 独立盲审</span><span class="arrow">→</span>
+          <span class="st done">R2 交叉反驳 #1</span><span class="arrow">→</span>
+          <span class="st done">R2 交叉反驳 #2</span><span class="arrow">→</span>
+          <span class="st done">R3 实验设计</span><span class="arrow">→</span>
+          <span class="st now">收敛分流</span>
+        </div>
+        <div class="branchnote">角色轮换：本轮 ChatGPT 任攻击者 / Claude 任 Builder；下轮对调（避免固化模型偏差）。</div>
+      </div>
+
+      <h2 class="sec">问题卡（合并后）</h2>
+
+      <div class="issue sev-high">
+        <div class="head"><span class="id">ISS-07</span><span class="b b-fail">severity: high</span>
+          <span class="b b-pass">共识 + 确定性证据 → 进候选补丁</span><span class="b b-mute">confidence 0.9</span></div>
+        <p>硬约束「必须给出恰好 5 条改进动作」在数据不足时迫使模型凑数，产出空泛动作。</p>
+        <div class="kv"><b>evidence:</b> C-014、C-025 复现；对抗案例 ADV-2 稳定触发 ·
+          <b>suspected_root_cause:</b> skill_defect ·
+          <b>alternative_explanation:</b> 模型能力不足（已被双模型同现象排除）·
+          <b>minimal_patch:</b> PATCH-chatgpt-004 / PATCH-claude-003</div>
+      </div>
+
+      <div class="issue sev-mid">
+        <div class="head"><span class="id">ISS-11</span><span class="b b-hold">severity: mid</span>
+          <span class="b b-info">分歧 + 可测试 → 先测试，不问用户</span></div>
+        <p>数据不足时应先给建议还是先要求补数据？双方分歧，但可由对照实验裁决。</p>
+        <div class="kv"><b>proposed_test:</b> T-3 三组数据完整度 × 三种策略（直接建议 / 先补数据 / 带置信度建议）· 状态：进行中 4/9</div>
+      </div>
+
+      <div class="issue sev-low">
+        <div class="head"><span class="id">ISS-12</span><span class="b b-info">severity: low</span>
+          <span class="b b-warn">共识 + 仅主观判断 → 入假设库，不改 Skill</span></div>
+        <p>双方均认为结论语气偏保守，但无失败案例支持。</p>
+        <div class="kv"><b>去向:</b> hypotheses/active.jsonl · H-021「结论前置在紧急复盘场景更有效」待案例验证</div>
+      </div>
+
+      <div class="issue sev-mid">
+        <div class="head"><span class="id">ISS-09</span><span class="b b-hold">severity: mid</span>
+          <span class="b b-acc">分歧 + 业务偏好 → 生成澄清问题 Q-2</span></div>
+        <p>复盘是否必须包含竞对对比？取决于业务意图，历史案例与测试均无法裁决。</p>
+      </div>
+
+      <div class="callout"><b>收敛规则提醒：</b>共识不是事实——ISS-12 双模型一致但仅有主观判断，只入假设库；分歧影响较小的（ISS-15 措辞类，已折叠 2 条）保留现状，不增加规则。</div>
+    </section>
+
+    <!-- ================= 澄清问题 ================= -->
+    <section id="tab-questions">
+      <div class="card">
+        <h3>Q-1 · 数据不足时的复盘策略 <span class="b b-acc">来源: ISS-11 关联业务意图部分</span></h3>
+        <p style="font-size:13.5px"><b>场景：</b>直播数据不足，但运营需要当天完成复盘。</p>
+        <div class="opt"><span class="tag">A</span><div class="body">先要求补充数据，不给具体动作<div class="impact">更稳，但容易中断流程</div></div></div>
+        <div class="opt"><span class="tag">B</span><div class="body">给出低置信度动作，并明确需要验证的假设<div class="impact">更快，但可能误判</div></div></div>
+        <div class="opt rec"><span class="tag">C</span><div class="body">根据缺失数据的重要程度动态决定 <span class="b b-acc">系统建议</span><div class="impact">更适合通用场景，但 Skill 逻辑更复杂</div></div></div>
+        <div class="callout">回答将按四类入库（硬边界 / 稳定偏好 / 待验证方向 / 单次反馈），关联到 ISS-11 与候选修改，<b>禁止直接追加到 Skill 末尾</b>，单次回答不会变成 MUST / NEVER。</div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>Q-2 · 复盘是否必须包含竞对对比 <span class="b b-acc">来源: ISS-09</span></h3>
+        <p style="font-size:13.5px"><b>场景：</b>部分历史反馈要求竞对对比，另一部分认为拖慢产出，两类反馈冲突。</p>
+        <div class="opt"><span class="tag">A</span><div class="body">所有复盘强制包含竞对段落<div class="impact">信息完整，但数据缺失时段落空泛</div></div></div>
+        <div class="opt rec"><span class="tag">B</span><div class="body">仅当竞对数据可得且与本场目标相关时加入 <span class="b b-acc">系统建议</span><div class="impact">按需出现，需要定义「相关」的判断规则</div></div></div>
+        <div class="opt"><span class="tag">C</span><div class="body">不做竞对对比，另设独立竞对报告<div class="impact">复盘更快，但信息分散</div></div></div>
+      </div>
+
+      <h2 class="sec">已归档回答</h2>
+      <div class="card tblwrap">
+        <table>
+          <thead><tr><th>时间</th><th>回答摘要</th><th>分类</th><th>处理</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">07-08</td><td>「希望结论更直接」</td><td><span class="b b-warn">hypothesis</span></td><td>入假设 H-021 + 影响「表达效率」评价维度，未生成规则</td></tr>
+            <tr><td class="mono">07-03</td><td>「绝不允许在复盘中引用未核实的竞对 GMV」</td><td><span class="b b-fail">hard_boundary</span></td><td>生成强约束候选（已随 v1.3.0 晋级）</td></tr>
+            <tr><td class="mono">06-28</td><td>「这场的建议太长了」</td><td><span class="b b-mute">case_feedback</span></td><td>仅记录为 C-011 案例证据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= 候选与评测 ================= -->
+    <section id="tab-candidates">
+      <div class="card">
+        <div class="head" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">PATCH-chatgpt-004 <span class="hint">candidates/chatgpt/ · vs 生产 v1.3.0</span></h3>
+          <span class="b b-pass">RECOMMENDED</span>
+        </div>
+        <div class="kv" style="margin-bottom:8px">
+          <b>problem:</b> 硬约束迫使凑数（ISS-07）·
+          <b>evidence:</b> C-014 / C-025 / ADV-2 ·
+          <b>root_cause:</b> skill_defect ·
+          <b>expected_effect:</b> 数据不足时动作数量随证据收缩 ·
+          <b>regression_risk:</b> 动作偏少可能被运营感知为「不够尽力」·
+          <b>rollback_version:</b> <span class="mono">git tag chatgpt-v1.3.0</span>
+        </div>
+        <div class="diff"><span class="ctx">## 输出要求</span><span class="del">- 每次复盘必须给出恰好 5 条改进动作。</span><span class="add">+ 给出 1~5 条改进动作；每条动作必须绑定至少一条本场数据证据，</span><span class="add">+ 无法绑定证据的动作不得输出。数据不足时明确列出缺失项。</span><span class="ctx">  动作需标注优先级与验证指标。</span></div>
+
+        <h3 style="margin:14px 0 8px">回归评测（12 回归 + 8 隐藏 + 5 对抗 · 交叉盲审：Claude 主审 + 确定性检查 · n=3）</h3>
+        <div class="tblwrap">
+        <table>
+          <thead><tr><th>指标</th><th class="num">权重</th><th class="num">基线</th><th class="num">候选</th><th class="num">变化</th></tr></thead>
+          <tbody>
+            <tr><td>问题判断与证据关联</td><td class="num">20</td><td class="num">14.2</td><td class="num">15.8</td><td class="num"><span class="delta-up">+1.6</span></td></tr>
+            <tr><td>动作具体性与可执行性</td><td class="num">25</td><td class="num">16.0</td><td class="num">19.1</td><td class="num"><span class="delta-up">+3.1</span></td></tr>
+            <tr><td>优先级与资源匹配</td><td class="num">15</td><td class="num">11.3</td><td class="num">11.5</td><td class="num"><span class="delta-up">+0.2</span></td></tr>
+            <tr><td>验证方式与指标设计</td><td class="num">15</td><td class="num">10.8</td><td class="num">11.0</td><td class="num"><span class="delta-up">+0.2</span></td></tr>
+            <tr><td>动作影响业务数据的逻辑</td><td class="num">15</td><td class="num">11.1</td><td class="num">10.9</td><td class="num"><span class="delta-dn">−0.2</span></td></tr>
+            <tr><td>一致性与不确定性处理</td><td class="num">10</td><td class="num">8.0</td><td class="num">7.8</td><td class="num"><span class="delta-dn">−0.2</span></td></tr>
+            <tr><td><b>加权总分</b></td><td class="num">100</td><td class="num"><b>71.4</b></td><td class="num"><b>76.1</b></td><td class="num"><span class="delta-up">+4.7</span></td></tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="note" style="margin-top:8px">
+          候选胜率 9/12 · 硬性失败 0 · 隐藏回归 0 · 输出成本 +4%（单独记录，不计入总分）· 输出方差 σ=2.1 · 失败明细见 evaluations/R-0031/
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+          <button class="act" id="promote-btn">申请晋级（需用户确认）</button>
+          <button class="act ghost">查看完整 diff</button>
+          <span class="note" id="promote-note">晋级由用户在本地显式执行，系统不自行调用。</span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">PATCH-claude-003 <span class="hint">candidates/claude/ · vs 生产 v1.2.1</span></h3>
+          <span class="b b-hold">HOLD</span>
+        </div>
+        <div class="kv">同源问题 ISS-07 的 Claude 适配版（不复制 ChatGPT 写法）。交叉盲审两审分差 17% &gt; 15% 阈值 →
+          已触发双模型复审 + <b>人工裁决</b>；加权分 −1.2，疑似「一致性处理」维度回退，待复审结论。</div>
+      </div>
+
+      <div class="callout">
+        写权限边界：模型仅可写 <span class="mono">candidates/chatgpt/ · candidates/claude/</span>；
+        生产目录、评测内核、隐藏回归集、晋级规则对模型只读（9.2）。
+      </div>
+    </section>
+
+    <!-- ================= 验收清单 ================= -->
+    <section id="tab-acceptance">
+      <div class="card">
+        <h3>验收标准 15 条 <span class="hint">通过 9 · 待验证 6（模拟数据）</span></h3>
+        <ul class="ck">
+          <li><span class="no">1</span><span class="s"><span class="b b-pass">通过</span></span>无意义目标返回 INVALID_TASK / BLOCKED_BY_AMBIGUITY，不给高分</li>
+          <li><span class="no">2</span><span class="s"><span class="b b-pass">通过</span></span>能识别 Skill 中人为植入的明显矛盾</li>
+          <li><span class="no">3</span><span class="s"><span class="b b-pass">通过</span></span>能区分 Skill / 输入 / 模型波动 / 工具 / 评测器问题</li>
+          <li><span class="no">4</span><span class="s"><span class="b b-pass">通过</span></span>每个候选修改可追溯到具体案例、问题和测试</li>
+          <li><span class="no">5</span><span class="s"><span class="b b-pass">通过</span></span>用户单次回答不自动变成 MUST / NEVER</li>
+          <li><span class="no">6</span><span class="s"><span class="b b-pass">通过</span></span>共识缺证据时只形成假设，不形成正式规则</li>
+          <li><span class="no">7</span><span class="s"><span class="b b-hold">待验证</span></span>分歧可测试时不打扰用户（T-3 完成后核验）</li>
+          <li><span class="no">8</span><span class="s"><span class="b b-pass">通过</span></span>ChatGPT / Claude 分别生成模型适配版本</li>
+          <li><span class="no">9</span><span class="s"><span class="b b-pass">通过</span></span>隐藏回归集对候选生成模型不可见</li>
+          <li><span class="no">10</span><span class="s"><span class="b b-pass">通过</span></span>系统不能写入生产目录、评测内核和晋级规则</li>
+          <li><span class="no">11</span><span class="s"><span class="b b-hold">待验证</span></span>报告说明改了什么 / 为什么 / 哪里变好 / 哪里可能退化</li>
+          <li><span class="no">12</span><span class="s"><span class="b b-hold">待验证</span></span>任意候选可通过 Git 恢复到原版本</li>
+          <li><span class="no">13</span><span class="s"><span class="b b-hold">待验证</span></span>波动免疫：3 次重跑仅 1 次失败 → 不生成候选（C-017 已示例）</li>
+          <li><span class="no">14</span><span class="s"><span class="b b-hold">待验证</span></span>通用化：接入第二类 target 零代码修改、迁移 ≤ 1 天</li>
+          <li><span class="no">15</span><span class="s"><span class="b b-hold">待验证</span></span>成本可控：运行前打印预估，超预算落 HOLD</li>
+        </ul>
+      </div>
+      <div class="callout">
+        第一阶段明确不做：scripts/ 与 references/ 优化 · MCP / 外部服务 / 真实业务自动操作 ·
+        评测内核自动演化 · L3 自动晋升 · 「完全自主发现所有需求」。
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.nav-btn');
+  const titles = {overview:'概览',pipeline:'流程状态机',cases:'案例库',spar:'左右互搏',
+                  questions:'澄清问题',candidates:'候选与评测',acceptance:'验收清单'};
+  tabs.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      tabs.forEach(b=>b.setAttribute('aria-current','false'));
+      btn.setAttribute('aria-current','true');
+      document.querySelectorAll('section').forEach(s=>s.classList.remove('active'));
+      document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+      document.getElementById('page-title').textContent = titles[btn.dataset.tab];
+      window.scrollTo({top:0});
+    });
+  });
+  document.getElementById('promote-btn').addEventListener('click',()=>{
+    const note = document.getElementById('promote-note');
+    note.textContent = '已生成晋级请求单（reports/R-0031/promotion-request.md）。请在本地执行 git 合并完成晋级——L2 边界：系统不会自动覆盖生产版本。';
+    note.style.color = 'var(--warn)';
+  });
+</script>
